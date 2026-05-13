@@ -1,309 +1,107 @@
-# DevInsight v0.1.0 🔍
+# DevInsight
+
+DevInsight is a Rust-powered Android `adb logcat` viewer for developers who want fast local log triage from a terminal. It supports a standard streaming CLI mode and an interactive TUI mode with filtering, search, stats, clipboard copy, and optional JSONL log storage.
+
+## Prerequisites
+
+- Rust and Cargo
+- Android Debug Bridge (`adb`)
+- A connected Android device or running emulator
 
 ## Installation
 
 ```bash
-# Install directly from crates.io
-cargo install devinsight
-
-# Or build from source
-git clone https://github.com/YOUR_GITHUB/DevInsight.git
-cd DevInsight
 cargo install --path .
 ```
 
 ## Quick Start
+
 ```bash
-# Basic TUI mode
+# Standard streaming mode
+devinsight
+
+# Interactive TUI mode
 devinsight -i
 
-# TUI with log storage
+# Filter by log level and tag
+devinsight --filter E --tag MyApp
+devinsight -i --filter E --tag MyApp
+
+# Select an Android logcat buffer
+devinsight --buffer main
+devinsight --buffer system
+devinsight --buffer crash
+
+# Show logs since a timestamp or count accepted by adb logcat -T
+devinsight --since "2024-03-20 10:00:00"
+devinsight -i --since 50
+```
+
+## Storage
+
+DevInsight can save streamed logs as JSONL files and load them later.
+
+```bash
+# Save logs to ./logs/logcat_YYYYMMDD_HHMMSS.jsonl
+devinsight --save
+
+# Save logs from TUI mode
 devinsight -i --save
 
-# Filter specific app logs
-devinsight -i --tag MyApp
+# Use a custom save directory and rotation size in MB
+devinsight --save --save-path /tmp/devinsight-logs --max-size 200
+
+# Load a saved JSONL file instead of spawning adb
+devinsight --load /tmp/devinsight-logs/logcat_20240321_143022.jsonl
+devinsight -i --load /tmp/devinsight-logs/logcat_20240321_143022.jsonl
 ```
 
-## Key Features in v0.1.0
-- 🔄 Real-time log streaming with tail mode
-- 🎨 Interactive filtering (e/w/i/d/v)
-- 🔍 Full-text search with live results
-- 💾 Automatic log storage and rotation
-- 📊 Statistics view
-- ⌨️ Intuitive keyboard shortcuts
+Stored JSONL fields are kept stable:
 
-# DevInsight: Real-time Log Analyzer for Developers 🚀
+- `timestamp`
+- `level`
+- `tag`
+- `message`
+- `device_id`
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/YOUR_GITHUB/DevInsight/build.yml?branch=main)
-![Contributors](https://img.shields.io/github/contributors/YOUR_GITHUB/DevInsight)
-![License](https://img.shields.io/github/license/YOUR_GITHUB/DevInsight)
+## TUI Controls
 
-## Overview
-**DevInsight** is a blazing-fast, Rust-powered log analysis tool designed for developers who need real-time Android log monitoring. Starting with **Android logcat**, DevInsight provides color-coded output, advanced filtering, and intelligent insights. Future expansions will include support for iOS syslogs, Docker logs, and cloud-based logging solutions.
-
-## Features
-✅ **Real-time log streaming** with color-coded output
-✅ **Advanced filtering** by log level and tags
-✅ **Multiple buffer support** (main, system, crash)
-✅ **Flexible output formats**
-✅ **Timestamp-based filtering**
-✅ **Optimized Rust performance** for low-latency processing
-✅ **macOS-specific optimizations:**
-  - **Native system notifications for errors**
-  - **Command key shortcuts (⌘C for copy, ⌘N for notification toggle)**
-  - **Clipboard integration**
-
-## Installation
-
-### Prerequisites
-- Rust and Cargo
-- Android Debug Bridge (ADB)
-- Connected Android device or emulator
-
-### Ubuntu/Linux
-```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Install ADB for Android Debugging
-sudo apt update && sudo apt install android-tools-adb -y
-
-# Clone DevInsight Repository
-git clone https://github.com/YOUR_GITHUB/DevInsight.git
-cd DevInsight
-cargo build --release
-```
-
-### macOS
-```bash
-# Install Homebrew (if not already installed)
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install Rust
-brew install rust
-
-# Install ADB
-brew install android-platform-tools
-
-# Clone DevInsight Repository
-git clone https://github.com/YOUR_GITHUB/DevInsight.git
-cd DevInsight
-cargo build --release
-```
-
-## Usage
-
-### Basic Commands
-```bash
-# Basic log viewing
-cargo run
-
-# Force color output (if needed)
-FORCE_COLOR=1 cargo run
-```
-
-### Filtering Options
-```bash
-# Filter by log level
-cargo run -- --filter E    # Show only errors
-cargo run -- --filter W    # Show only warnings
-cargo run -- --filter I    # Show only info
-cargo run -- --filter D    # Show only debug
-cargo run -- --filter V    # Show only verbose
-
-# Filter by tag
-cargo run -- --tag MyApp   # Show logs only from 'MyApp'
-
-# Combine filters
-cargo run -- --filter E --tag MyApp  # Show only errors from 'MyApp'
-```
-
-### Buffer Selection
-```bash
-# Select specific buffer
-cargo run -- --buffer main    # Main buffer only
-cargo run -- --buffer system  # System buffer only
-cargo run -- --buffer crash   # Crash buffer only
-```
-
-### Output Formatting
-```bash
-# Change log format
-cargo run -- --format brief    # Brief format
-cargo run -- --format process  # Show process ID
-cargo run -- --format thread   # Show thread info
-cargo run -- --format raw      # Raw log output
-cargo run -- --format tag      # Tag-focused format
-```
-
-### Log Management
-```bash
-# Clear logs before starting
-cargo run -- --clear
-
-# Show logs since specific time
-cargo run -- --since "2024-03-20 10:00:00"
-```
-
-### Color Coding
-The output is color-coded for better readability:
-- 🔴 **Red** - Errors (E)
-- ⚠️ **Yellow** - Warnings (W)
-- ℹ️ **Green** - Info (I)
-- 🔧 **Blue** - Debug (D)
-- 📝 **White** - Verbose (V)
+| Key | Action |
+| --- | --- |
+| `1` / `2` / `3` | Logs, stats, storage views |
+| `Space` | Pause or resume intake |
+| `t` | Toggle tail mode |
+| `/` | Search visible logs |
+| `e` / `w` / `i` / `d` / `v` | Toggle level filters |
+| `Up` / `Down` | Scroll |
+| `PageUp` / `PageDown` | Scroll faster |
+| `Home` / `g` | Jump to first log |
+| `End` / `G` | Jump to latest log |
+| `y` or `c` | Copy selected log |
+| `n` | Toggle error notifications when built with the `macos` feature |
+| `q` | Quit |
 
 ## Command Line Options
+
 | Option | Short | Description |
-|--------|--------|-------------|
-| `--filter` | `-f` | Filter logs by level (E, W, I, D, V) |
-| `--tag` | `-t` | Filter logs by specific tag |
-| `--clear` | `-c` | Clear logs before starting |
-| `--since` | `-T` | Show logs since timestamp |
-| `--buffer` | `-b` | Select buffer (main, system, crash) |
-| `--format` | `-v` | Set output format |
+| --- | --- | --- |
+| `--filter` | `-f` | Filter logs by level (`E`, `W`, `I`, `D`, `V`) |
+| `--tag` | `-t` | Filter logs by tag substring |
+| `--clear` | `-c` | Clear logcat before streaming |
+| `--since` | `-T` | Pass a timestamp or count to `adb logcat -T` |
+| `--buffer` | `-b` | Select `main`, `system`, or `crash` buffer |
+| `--format` | `-v` | Standard-mode logcat format |
+| `--interactive` | `-i` | Use the interactive TUI |
+| `--save` | | Save streamed logs to JSONL |
+| `--save-path` | | Directory for saved logs |
+| `--max-size` | | Rotation size in MB |
+| `--load` | | Load a saved JSONL file instead of spawning `adb` |
 
-## Roadmap
-🚀 **Phase 1 (Android Logcat MVP)**
-- ✅ Basic CLI for streaming logs
-- ✅ Error and warning filtering
-- ✅ Custom tag-based search
-- ⏳ Interactive TUI interface using `ratatui`
-
-⚡ **Phase 2 (Advanced Logging & Expansion)**
-- Persistent log storage for later analysis
-- iOS syslog support
-- Docker container log integration
-- Cloud integration (GCP, AWS, Firebase logging)
-- Automated issue detection & insights
-
-## Contributing
-We welcome contributions! Please follow these steps:
-1. Fork the repo and clone locally
-2. Create a new feature branch (`git checkout -b feature-name`)
-3. Make your changes and commit (`git commit -m "Added new feature"`)
-4. Push to your fork and submit a Pull Request
-
-## License
-MIT License © 2024 Adam Deane
-
-## Connect
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Adam_Deane-blue?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/adam-deane-93456927/)
-
-### Log Storage
-DevInsight now supports persistent log storage with automatic rotation:
+## Development
 
 ```bash
-# Save logs to file (default location: ./logs/logcat_YYYYMMDD_HHMMSS.jsonl)
-cargo run -- --save
-
-# Save logs in interactive mode
-cargo run -- -i --save
-
-# Specify custom save location
-cargo run -- --save --save-path /path/to/logs
-cargo run -- --save --save-path ~/android_logs    # Store in home directory
-cargo run -- --save --save-path /tmp/my_logs      # Store in temporary directory
-
-# Set maximum log file size before rotation (in MB)
-cargo run -- --save --max-size 200
+cargo test
+cargo run -- -i --filter E --tag TestApp --buffer main
 ```
 
-Logs are stored in JSONL format with the following features:
-- Files named with timestamp pattern: `logcat_YYYYMMDD_HHMMSS.jsonl`
-- Automatic log rotation based on file size
-- Timestamp-based querying
-- Device ID tracking
-- Full log level and tag preservation
-
-Example log file path:
-```
-./logs/logcat_20240321_143022.jsonl  # Default location
-~/android_logs/logcat_20240321_143022.jsonl  # When using --save-path ~/android_logs
-```
-
-## Testing and Debugging
-
-### Generate Test Logs
-Use these commands to generate test logs with different levels and patterns:
-
-```bash
-# Generate multiple error logs
-for i in {0..9}; do adb shell "log -p e -t TestApp 'Error message'"; done
-
-# Generate warning logs
-for i in {0..9}; do adb shell "log -p w -t TestApp 'Warning message'"; done
-
-# Generate info logs
-for i in {0..9}; do adb shell "log -p i -t TestApp 'Info message'"; done
-
-# Generate debug logs
-for i in {0..9}; do adb shell "log -p d -t TestApp 'Debug message'"; done
-
-# Generate verbose logs
-for i in {0..9}; do adb shell "log -p v -t TestApp 'Verbose message'"; done
-
-# Generate mixed logs
-for level in e w i d v; do
-    adb shell "log -p $level -t TestApp 'Test message for level $level'"
-done
-
-# Generate logs with different tags
-for tag in App1 App2 App3; do
-    adb shell "log -p i -t $tag 'Message from $tag'"
-done
-
-# Generate logs with increasing numbers
-for i in {1..10}; do
-    adb shell "log -p i -t TestApp 'Message number $i'"
-done
-
-# Rapid log generation (stress test)
-for i in {1..100}; do
-    adb shell "log -p i -t TestApp 'Stress test message $i'" &
-done
-```
-
-### Testing Features
-1. Test log level filtering:
-   - Press 'e', 'w', 'i', 'd', 'v' to toggle different log levels
-   - Generate logs of different levels to verify filtering
-
-2. Test search functionality:
-   - Press '/' to enter search mode
-   - Type "error", "warning", or any other term
-   - Press ESC to clear search
-
-3. Test tail mode:
-   - Press 't' to toggle tail mode
-   - Generate new logs to verify auto-scroll
-   - Use Up/Down arrows to navigate
-
-4. Test storage:
-```bash
-# Test with default storage
-cargo run -- -i --save
-
-# Test with custom storage path
-cargo run -- -i --save --save-path ./test_logs
-
-# Test with smaller rotation size (1MB)
-cargo run -- -i --save --max-size 1
-```
-
-## Keyboard Shortcuts
-
-| Key          | Action                    |
-|--------------|---------------------------|
-| e/w/i/d/v    | Toggle log levels        |
-| /            | Enter search mode        |
-| Space        | Pause/resume logs        |
-| t            | Toggle tail mode         |
-| ↑/↓          | Scroll logs             |
-| Home/g       | Jump to first log        |
-| End/G        | Jump to latest log       |
-| 1/2/3        | Switch views            |
-| q            | Quit                     |
-| Esc          | Clear search            |
-
+This project currently focuses on Android logcat only. Broader sources such as iOS syslogs, Docker logs, and cloud logging are intentionally out of scope for the current reliability pass.
