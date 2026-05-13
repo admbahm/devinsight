@@ -5,7 +5,7 @@ edition = "2021"
 description = "A powerful TUI Android log analyzer with real-time filtering and search"
 authors = ["Adam Deane"]
 license = "MIT"
-repository = "https://github.com/YOUR_GITHUB/DevInsight"
+repository = "https://github.com/admbahm/devinsight"
 keywords = ["android", "logcat", "tui", "debugging", "development"]
 categories = ["development-tools", "command-line-utilities"]
 

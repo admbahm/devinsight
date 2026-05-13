@@ -1,5 +1,7 @@
 # Contributing to DevInsight
 
+By contributing to DevInsight, you agree that your contributions are licensed under the MIT License.
+
 ## Development Setup
 1. Install Rust and Cargo
 2. Install ADB
