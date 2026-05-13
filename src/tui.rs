@@ -501,13 +501,7 @@ impl Tui {
                                             self.state.filtered_logs.get(self.state.scroll)
                                         {
                                             if let Some(log) = self.state.logs.get(index) {
-                                                let log_text = format!(
-                                                    "{} [{}] {}: {}",
-                                                    log.timestamp,
-                                                    log.tag,
-                                                    log.level.as_str(),
-                                                    log.message
-                                                );
+                                                let log_text = format_log_for_clipboard(log);
                                                 if clipboard.set_contents(log_text).is_ok() {
                                                     // Show copy confirmation in status
                                                     self.state.status_message = Some((
@@ -526,13 +520,7 @@ impl Tui {
                                             self.state.filtered_logs.get(self.state.scroll)
                                         {
                                             if let Some(log) = self.state.logs.get(index) {
-                                                let log_text = format!(
-                                                    "{} [{}] {}: {}",
-                                                    log.timestamp,
-                                                    log.tag,
-                                                    log.level.as_str(),
-                                                    log.message
-                                                );
+                                                let log_text = format_log_for_clipboard(log);
                                                 if clipboard.set_contents(log_text).is_ok() {
                                                     self.state.status_message = Some((
                                                         "Log copied to clipboard".to_string(),
@@ -863,6 +851,24 @@ impl Tui {
             .style(Style::default().fg(Color::Gray));
         f.render_widget(help, area);
     }
+}
+
+fn format_log_for_clipboard(log: &LogEntry) -> String {
+    let thread_info = match (log.pid, log.tid) {
+        (Some(pid), Some(tid)) => format!(" pid={} tid={}", pid, tid),
+        (Some(pid), None) => format!(" pid={}", pid),
+        (None, Some(tid)) => format!(" tid={}", tid),
+        (None, None) => String::new(),
+    };
+
+    format!(
+        "{}{} [{}] {}: {}",
+        log.timestamp,
+        thread_info,
+        log.tag,
+        log.level.as_str(),
+        log.message
+    )
 }
 
 impl Drop for Tui {
