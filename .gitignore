@@ -5,7 +5,6 @@
 
 # Rust/Cargo specific files
 **/*.rs.bk
-Cargo.lock
 
 # IDE/editor files
 .idea/
@@ -30,7 +29,6 @@ test_logs/
 # Rust artifacts
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE specific files
 .idea/

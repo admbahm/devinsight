@@ -105,3 +105,7 @@ cargo run -- -i --filter E --tag TestApp --buffer main
 ```
 
 This project currently focuses on Android logcat only. Broader sources such as iOS syslogs, Docker logs, and cloud logging are intentionally out of scope for the current reliability pass.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
