@@ -187,7 +187,7 @@ impl AppState {
             last_notification: None,
             wrap_mode: false,
             inspector_active: false,
-            log_rates: VecDeque::from(vec![0; 60]), // Pre-fill 60 intervals
+            log_rates: VecDeque::from(vec![0; 200]), // Pre-fill 200 intervals
             last_rate_update: Instant::now(),
             logs_received_this_sec: 0,
         }
@@ -196,7 +196,7 @@ impl AppState {
     pub fn update_rates(&mut self) {
         if self.last_rate_update.elapsed() >= Duration::from_secs(1) {
             self.log_rates.push_back(self.logs_received_this_sec);
-            if self.log_rates.len() > 60 {
+            if self.log_rates.len() > 200 {
                 self.log_rates.pop_front();
             }
             self.logs_received_this_sec = 0;
@@ -948,7 +948,19 @@ impl Tui {
             .style(Style::default().fg(Color::Cyan));
         f.render_widget(bar_chart, barchart_area);
 
-        let rates_data: Vec<u64> = state.log_rates.iter().cloned().collect();
+        let sparkline_width = sparkline_area.width.saturating_sub(2) as usize;
+        let rates_data: Vec<u64> = if state.log_rates.len() > sparkline_width {
+            state.log_rates
+                .iter()
+                .skip(state.log_rates.len() - sparkline_width)
+                .cloned()
+                .collect()
+        } else {
+            let padding_len = sparkline_width - state.log_rates.len();
+            let mut padded = vec![0; padding_len];
+            padded.extend(state.log_rates.iter().cloned());
+            padded
+        };
 
         let sparkline = Sparkline::default()
             .block(Block::default().borders(Borders::ALL).title(" Log Ingestion Rate (logs/sec) "))
@@ -1354,16 +1366,16 @@ mod tests {
     fn app_state_ingestion_rates_overflow_cap() {
         let mut state = AppState::new(None);
         
-        // Simulating 65 rate updates
-        for i in 0..65 {
+        // Simulating 205 rate updates
+        for i in 0..205 {
             state.logs_received_this_sec = i as u64;
             state.last_rate_update = Instant::now() - Duration::from_secs(2);
             state.update_rates();
         }
 
-        assert_eq!(state.log_rates.len(), 60);
+        assert_eq!(state.log_rates.len(), 200);
         // The oldest rate values (0..5) should have been popped off
         assert_eq!(state.log_rates.front().cloned(), Some(5));
-        assert_eq!(state.log_rates.back().cloned(), Some(64));
+        assert_eq!(state.log_rates.back().cloned(), Some(204));
     }
 }
