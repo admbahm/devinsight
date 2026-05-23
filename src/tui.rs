@@ -1,5 +1,4 @@
 use crate::storage::StorageUpdate;
-use colored::Colorize;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::{
     event::{
@@ -12,6 +11,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
     Frame, Terminal,
 };
@@ -125,6 +125,8 @@ pub struct AppState {
     pub notify_on_error: bool,
     #[allow(dead_code)]
     pub last_notification: Option<Instant>,
+    pub wrap_mode: bool,
+    pub inspector_active: bool,
 }
 
 pub struct StorageInfo {
@@ -180,6 +182,8 @@ impl AppState {
             connection_status: ConnectionStatus::Connected,
             notify_on_error: true,
             last_notification: None,
+            wrap_mode: false,
+            inspector_active: false,
         }
     }
 
@@ -453,13 +457,13 @@ impl Tui {
                                 KeyCode::Char('/') => self.state.search_mode = true,
                                 KeyCode::Char(' ') => self.state.paused = !self.state.paused,
                                 KeyCode::Char('t') => self.state.tail_mode = !self.state.tail_mode,
-                                KeyCode::Up => {
+                                KeyCode::Up | KeyCode::Char('k') => {
                                     if self.state.scroll > 0 {
                                         self.state.tail_mode = false; // Disable tail mode when scrolling up
                                         self.state.scroll = self.state.scroll.saturating_sub(1);
                                     }
                                 }
-                                KeyCode::Down => {
+                                KeyCode::Down | KeyCode::Char('j') => {
                                     let max_scroll =
                                         self.state.filtered_logs.len().saturating_sub(1);
                                     if self.state.scroll < max_scroll {
@@ -469,6 +473,23 @@ impl Tui {
                                             self.state.tail_mode = true;
                                         }
                                     }
+                                }
+                                KeyCode::Enter => {
+                                    self.state.inspector_active = !self.state.inspector_active;
+                                }
+                                KeyCode::Char('o') | KeyCode::Char('W') => {
+                                    self.state.wrap_mode = !self.state.wrap_mode;
+                                    self.state.status_message = Some((
+                                        format!(
+                                            "Wrap mode {}",
+                                            if self.state.wrap_mode {
+                                                "enabled"
+                                            } else {
+                                                "disabled"
+                                            }
+                                        ),
+                                        Instant::now(),
+                                    ));
                                 }
                                 KeyCode::End | KeyCode::Char('G') => {
                                     let max_scroll =
@@ -576,7 +597,6 @@ impl Tui {
     }
 
     fn draw(&mut self) -> io::Result<()> {
-        let status = self.get_status(); // Get status before terminal.draw
         self.terminal.draw(|f| {
             let size = f.size();
             let main_block = Block::default()
@@ -607,10 +627,7 @@ impl Tui {
                 View::Storage => Self::draw_storage(f, main_layout[1], &self.state),
             }
 
-            let status_widget = Paragraph::new(status).style(Style::default().fg(Color::White));
-            f.render_widget(status_widget, main_layout[2]);
-
-            Self::draw_help(f, main_layout[3]);
+            FooterStatus::new(&self.state).render(f, main_layout[2], main_layout[3]);
         })?;
         Ok(())
     }
@@ -634,9 +651,20 @@ impl Tui {
     }
 
     fn draw_logs(f: &mut Frame, area: Rect, state: &AppState) {
+        // Split layout if inspector is active
+        let (logs_area, inspector_area) = if state.inspector_active {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
+                .split(area);
+            (chunks[0], Some(chunks[1]))
+        } else {
+            (area, None)
+        };
+
         // Calculate actual display area accounting for borders and padding
-        let inner_width = area.width.saturating_sub(2); // Subtract 2 for borders
-        let max_display = area.height.saturating_sub(2); // Subtract 2 for borders
+        let inner_width = logs_area.width.saturating_sub(2); // Subtract 2 for borders
+        let max_display = logs_area.height.saturating_sub(2); // Subtract 2 for borders
         let total_logs = state.filtered_logs.len();
 
         // Calculate the start index for displaying logs
@@ -646,23 +674,38 @@ impl Tui {
             state.scroll
         };
 
-        let visible_logs: Vec<ListItem> = state
+        let visible_entries: Vec<&LogEntry> = state
             .filtered_logs
             .iter()
             .skip(start_index)
             .take(max_display as usize)
             .filter_map(|&index| state.logs.get(index))
-            .map(|log| {
-                // Fixed widths for each component
+            .collect();
+
+        // Calculate dynamic tag column width based on visible logs
+        let max_tag_len = visible_entries
+            .iter()
+            .map(|log| log.tag.len())
+            .max()
+            .unwrap_or(8);
+        let tag_width = max_tag_len.clamp(8, 20);
+
+        let visible_logs: Vec<ListItem> = visible_entries
+            .iter()
+            .enumerate()
+            .map(|(i, log)| {
+                let current_index = start_index + i;
+                let is_selected = current_index == state.scroll;
+
+                // Fixed widths for specific components
                 const TIMESTAMP_WIDTH: usize = 19;
-                const TAG_WIDTH: usize = 8;
                 const LEVEL_WIDTH: usize = 5;
                 const PADDING: usize = 7; // For brackets, spaces, and colon
 
                 // Calculate remaining width for message
                 let message_width = (inner_width as usize)
                     .saturating_sub(TIMESTAMP_WIDTH)
-                    .saturating_sub(TAG_WIDTH)
+                    .saturating_sub(tag_width)
                     .saturating_sub(LEVEL_WIDTH)
                     .saturating_sub(PADDING)
                     .saturating_sub(2); // Account for icon and space
@@ -677,20 +720,65 @@ impl Tui {
                     LogLevel::Unknown => "❓",
                 };
 
-                let line = format!(
-                    "{} {:<width$} [{:<tag_width$}] {:<level_width$}: {:.message_width$}",
-                    icon,
-                    log.timestamp,
-                    log.tag.chars().take(TAG_WIDTH).collect::<String>(),
-                    log.level.as_str(),
-                    log.message,
-                    width = TIMESTAMP_WIDTH,
-                    tag_width = TAG_WIDTH,
-                    level_width = LEVEL_WIDTH,
-                    message_width = message_width
-                );
+                let formatted_tag = format_tag(&log.tag, tag_width);
+                let tag_color = get_tag_color(&log.tag);
+                let level_color = log.level.color();
+                let message_color = match log.level {
+                    LogLevel::Error => Color::Red,
+                    LogLevel::Warning => Color::Yellow,
+                    LogLevel::Info => Color::Reset,
+                    _ => Color::Gray,
+                };
 
-                ListItem::new(line).style(Style::default().fg(log.level.color()))
+                let mut lines = Vec::new();
+
+                if state.wrap_mode {
+                    let wrapped = wrap_message(&log.message, message_width);
+                    for (idx, msg_line) in wrapped.iter().enumerate() {
+                        if idx == 0 {
+                            let spans = vec![
+                                Span::styled(format!("{} ", icon), Style::default().fg(level_color)),
+                                Span::styled(format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp), Style::default().fg(Color::DarkGray)),
+                                Span::styled(format!("[{:<tag_width$}] ", formatted_tag), Style::default().fg(tag_color).add_modifier(Modifier::BOLD)),
+                                Span::styled(format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()), Style::default().fg(level_color)),
+                                Span::styled(msg_line.clone(), Style::default().fg(message_color)),
+                            ];
+                            lines.push(Line::from(spans));
+                        } else {
+                            let padding_len = TIMESTAMP_WIDTH + tag_width + LEVEL_WIDTH + PADDING + 2;
+                            let padding_spaces = " ".repeat(padding_len);
+                            let spans = vec![
+                                Span::styled(padding_spaces, Style::default().fg(Color::Reset)),
+                                Span::styled(msg_line.clone(), Style::default().fg(message_color)),
+                            ];
+                            lines.push(Line::from(spans));
+                        }
+                    }
+                } else {
+                    let truncated_message = if log.message.len() > message_width {
+                        format!(
+                            "{}...",
+                            log.message.chars().take(message_width.saturating_sub(3)).collect::<String>()
+                        )
+                    } else {
+                        log.message.clone()
+                    };
+
+                    let spans = vec![
+                        Span::styled(format!("{} ", icon), Style::default().fg(level_color)),
+                        Span::styled(format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp), Style::default().fg(Color::DarkGray)),
+                        Span::styled(format!("[{:<tag_width$}] ", formatted_tag), Style::default().fg(tag_color).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()), Style::default().fg(level_color)),
+                        Span::styled(truncated_message, Style::default().fg(message_color)),
+                    ];
+                    lines.push(Line::from(spans));
+                }
+
+                let mut item = ListItem::new(lines);
+                if is_selected {
+                    item = item.style(Style::default().bg(Color::Rgb(40, 44, 52)));
+                }
+                item
             })
             .collect();
 
@@ -713,7 +801,66 @@ impl Tui {
             )
             .highlight_style(Style::default().bg(Color::DarkGray));
 
-        f.render_widget(logs, area);
+        f.render_widget(logs, logs_area);
+
+        // Render inspector if active
+        if let Some(inspector_area) = inspector_area {
+            let mut details = Vec::new();
+            if let Some(&selected_index) = state.filtered_logs.get(state.scroll) {
+                if let Some(log) = state.logs.get(selected_index) {
+                    details.push(Line::from(vec![
+                        Span::styled("Timestamp: ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(&log.timestamp),
+                    ]));
+
+                    let pid_str = log.pid.map_or("N/A".to_string(), |p| p.to_string());
+                    let tid_str = log.tid.map_or("N/A".to_string(), |t| t.to_string());
+                    details.push(Line::from(vec![
+                        Span::styled("PID/TID:   ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(format!("{} / {}", pid_str, tid_str)),
+                    ]));
+
+                    details.push(Line::from(vec![
+                        Span::styled("Level:     ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(log.level.as_str(), Style::default().fg(log.level.color()).add_modifier(Modifier::BOLD)),
+                    ]));
+
+                    details.push(Line::from(vec![
+                        Span::styled("Tag:       ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(&log.tag, Style::default().fg(get_tag_color(&log.tag)).add_modifier(Modifier::BOLD)),
+                    ]));
+
+                    details.push(Line::from(""));
+                    details.push(Line::from(Span::styled("Message:", Style::default().fg(Color::DarkGray))));
+
+                    let message_color = match log.level {
+                        LogLevel::Error => Color::Red,
+                        LogLevel::Warning => Color::Yellow,
+                        LogLevel::Info => Color::Reset,
+                        _ => Color::Gray,
+                    };
+
+                    let inspector_inner_width = inspector_area.width.saturating_sub(2) as usize;
+                    for line in wrap_message(&log.message, inspector_inner_width) {
+                        details.push(Line::from(Span::styled(line, Style::default().fg(message_color))));
+                    }
+                } else {
+                    details.push(Line::from("No log details available"));
+                }
+            } else {
+                details.push(Line::from("No log selected"));
+            }
+
+            let paragraph = Paragraph::new(details)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Log Inspector ")
+                        .border_type(ratatui::widgets::BorderType::Rounded)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            f.render_widget(paragraph, inspector_area);
+        }
     }
 
     fn draw_stats(f: &mut Frame, area: Rect, state: &AppState) {
@@ -768,88 +915,129 @@ impl Tui {
             .style(Style::default().fg(Color::White));
         f.render_widget(storage_widget, area);
     }
+}
 
-    // New method to get status without borrowing self mutably
-    fn get_status(&self) -> String {
-        if self.state.search_mode {
-            format!(
-                "Search: {} | Press Enter to confirm or Esc to cancel",
-                self.state.search_query
-            )
-        } else if let Some((msg, time)) = &self.state.status_message {
-            if time.elapsed().as_secs() > 2 {
-                self.draw_normal_status(&self.state)
-            } else {
-                msg.clone()
-            }
-        } else {
-            self.draw_normal_status(&self.state)
+struct FooterStatus<'a> {
+    state: &'a AppState,
+    now: Instant,
+}
+
+impl<'a> FooterStatus<'a> {
+    const HELP_TEXT: &'static str = "1-3: Views | Enter: Inspect | o: Wrap | Space: Pause | t: Tail | /: Search | y: Copy | e/w/i/d/v: Filters | ↑/↓: Scroll | q: Quit";
+    const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(2);
+
+    fn new(state: &'a AppState) -> Self {
+        Self {
+            state,
+            now: Instant::now(),
         }
     }
 
-    // Helper method for normal status
-    fn draw_normal_status(&self, state: &AppState) -> String {
-        let connection_indicator = match state.connection_status {
-            ConnectionStatus::Connected => format!("🟢 {}", "Connected".green()),
-            ConnectionStatus::Disconnected => format!("🔴 {}", "Disconnected".red()),
-            ConnectionStatus::Error => format!("⚠️  {}", "Error".yellow()),
-        };
-
-        // Add spaces between filter indicators for better readability
-        let filters = format!(
-            "[{} {} {} {} {}]",
-            if state.level_filters.contains(&LogLevel::Error) {
-                "E".red()
-            } else {
-                "-".dimmed()
-            },
-            if state.level_filters.contains(&LogLevel::Warning) {
-                "W".yellow()
-            } else {
-                "-".dimmed()
-            },
-            if state.level_filters.contains(&LogLevel::Info) {
-                "I".green()
-            } else {
-                "-".dimmed()
-            },
-            if state.level_filters.contains(&LogLevel::Debug) {
-                "D".blue()
-            } else {
-                "-".dimmed()
-            },
-            if state.level_filters.contains(&LogLevel::Verbose) {
-                "V".white()
-            } else {
-                "-".dimmed()
-            },
-        );
-
-        let status = if state.paused {
-            "PAUSED".red()
-        } else {
-            "RUNNING".green()
-        };
-        let mode = if state.tail_mode {
-            "TAIL".cyan()
-        } else {
-            "SCROLL".yellow()
-        };
-        let position = format!("{:>3}/{:<3}", state.scroll + 1, state.filtered_logs.len());
-        let log_count = format!("{:>3} logs", state.filtered_logs.len());
-
-        format!(
-            "{} | {} | Filters {} | {} | {} | {} | {}",
-            connection_indicator, log_count, filters, position, status, mode, state.current_view
-        )
+    #[cfg(test)]
+    fn with_now(state: &'a AppState, now: Instant) -> Self {
+        Self { state, now }
     }
 
-    fn draw_help(f: &mut Frame, area: Rect) {
-        let help_text = "1-3: Views | Space: Pause | t: Tail | /: Search | y: Copy | n: Notifications | e/w/i/d/v: Filters | ↑/↓: Scroll | End/G: Latest | Home/g: First | q: Quit";
-        let help = Paragraph::new(help_text)
+    fn render(&self, f: &mut Frame, status_area: Rect, help_area: Rect) {
+        let status = Paragraph::new(self.status_line()).style(Style::default().fg(Color::White));
+        f.render_widget(status, status_area);
+
+        let help = Paragraph::new(Self::HELP_TEXT)
             .block(Block::default().borders(Borders::ALL))
             .style(Style::default().fg(Color::Gray));
-        f.render_widget(help, area);
+        f.render_widget(help, help_area);
+    }
+
+    fn status_line(&self) -> Line<'static> {
+        if self.state.search_mode {
+            return Line::from(format!(
+                "Search: {} | Press Enter to confirm or Esc to cancel",
+                self.state.search_query
+            ));
+        }
+
+        if let Some((msg, time)) = &self.state.status_message {
+            if self.now.duration_since(*time) <= Self::STATUS_MESSAGE_TTL {
+                return Line::from(msg.clone());
+            }
+        }
+
+        self.normal_status_line()
+    }
+
+    fn normal_status_line(&self) -> Line<'static> {
+        let state = self.state;
+        let mut spans = Vec::new();
+
+        match state.connection_status {
+            ConnectionStatus::Connected => {
+                spans.push(Span::styled(
+                    "🟢 Connected",
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            ConnectionStatus::Disconnected => {
+                spans.push(Span::styled(
+                    "🔴 Disconnected",
+                    Style::default().fg(Color::Red),
+                ));
+            }
+            ConnectionStatus::Error => {
+                spans.push(Span::styled(
+                    "⚠️  Error",
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+        }
+
+        spans.push(Span::raw(format!(
+            " | {:>3} logs | Filters [",
+            state.filtered_logs.len()
+        )));
+        self.push_level_filter(&mut spans, LogLevel::Error, "E", Color::Red);
+        spans.push(Span::raw(" "));
+        self.push_level_filter(&mut spans, LogLevel::Warning, "W", Color::Yellow);
+        spans.push(Span::raw(" "));
+        self.push_level_filter(&mut spans, LogLevel::Info, "I", Color::Green);
+        spans.push(Span::raw(" "));
+        self.push_level_filter(&mut spans, LogLevel::Debug, "D", Color::Blue);
+        spans.push(Span::raw(" "));
+        self.push_level_filter(&mut spans, LogLevel::Verbose, "V", Color::White);
+        spans.push(Span::raw(format!(
+            "] | {:>3}/{:<3} | ",
+            state.scroll + 1,
+            state.filtered_logs.len()
+        )));
+
+        if state.paused {
+            spans.push(Span::styled("PAUSED", Style::default().fg(Color::Red)));
+        } else {
+            spans.push(Span::styled("RUNNING", Style::default().fg(Color::Green)));
+        }
+        spans.push(Span::raw(" | "));
+
+        if state.tail_mode {
+            spans.push(Span::styled("TAIL", Style::default().fg(Color::Cyan)));
+        } else {
+            spans.push(Span::styled("SCROLL", Style::default().fg(Color::Yellow)));
+        }
+        spans.push(Span::raw(format!(" | {}", state.current_view)));
+
+        Line::from(spans)
+    }
+
+    fn push_level_filter(
+        &self,
+        spans: &mut Vec<Span<'static>>,
+        level: LogLevel,
+        label: &'static str,
+        color: Color,
+    ) {
+        if self.state.level_filters.contains(&level) {
+            spans.push(Span::styled(label, Style::default().fg(color)));
+        } else {
+            spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
+        }
     }
 }
 
@@ -871,6 +1059,69 @@ fn format_log_for_clipboard(log: &LogEntry) -> String {
     )
 }
 
+fn get_tag_color(tag: &str) -> Color {
+    let mut hash: u32 = 5381;
+    for c in tag.bytes() {
+        hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
+    }
+    let colors = [
+        Color::Cyan,
+        Color::Magenta,
+        Color::Blue,
+        Color::Green,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+    ];
+    colors[(hash as usize) % colors.len()]
+}
+
+fn format_tag(tag: &str, width: usize) -> String {
+    if tag.len() <= width {
+        format!("{:<width$}", tag, width = width)
+    } else {
+        let mut truncated = tag.chars().take(width.saturating_sub(2)).collect::<String>();
+        truncated.push_str("..");
+        truncated
+    }
+}
+
+fn wrap_message(message: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![message.to_string()];
+    }
+    let mut lines = Vec::new();
+    for sub_msg in message.lines() {
+        let mut current_line = String::new();
+        for word in sub_msg.split_whitespace() {
+            if current_line.is_empty() {
+                current_line.push_str(word);
+            } else if current_line.len() + 1 + word.len() <= width {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+                while current_line.len() > width {
+                    let (part1, part2) = current_line.split_at(width);
+                    lines.push(part1.to_string());
+                    current_line = part2.to_string();
+                }
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
 impl Drop for Tui {
     fn drop(&mut self) {
         disable_raw_mode().unwrap();
@@ -882,5 +1133,119 @@ impl Drop for Tui {
             .backend_mut()
             .execute(DisableMouseCapture)
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, buffer::Buffer};
+
+    fn render_footer_snapshot(state: &AppState, now: Instant, width: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                FooterStatus::with_now(state, now).render(
+                    f,
+                    Rect::new(0, 0, width, 1),
+                    Rect::new(0, 1, width, 3),
+                );
+            })
+            .unwrap();
+
+        buffer_lines(terminal.backend().buffer())
+    }
+
+    fn buffer_lines(buffer: &Buffer) -> Vec<String> {
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer.get(x, y).symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn app_state_with_logs() -> AppState {
+        let mut state = AppState::new(None);
+        state.filtered_logs = vec![0, 1, 2];
+        state.scroll = 2;
+        state
+    }
+
+    #[test]
+    fn footer_normal_state_matches_golden_snapshot() {
+        let state = app_state_with_logs();
+        let now = Instant::now();
+
+        let lines = render_footer_snapshot(&state, now, 96);
+
+        assert_eq!(
+            lines,
+            vec![
+                "🟢  Connected |   3 logs | Filters [E W I D V] |   3/3   | RUNNING | TAIL | Logs                 ",
+                "┌──────────────────────────────────────────────────────────────────────────────────────────────┐",
+                "│1-3: Views | Enter: Inspect | o: Wrap | Space: Pause | t: Tail | /: Search | y: Copy | e/w/i/d│",
+                "└──────────────────────────────────────────────────────────────────────────────────────────────┘",
+            ]
+        );
+    }
+
+    #[test]
+    fn footer_search_mode_matches_golden_snapshot() {
+        let mut state = app_state_with_logs();
+        state.search_mode = true;
+        state.search_query = "fatal".to_string();
+        let now = Instant::now();
+
+        let lines = render_footer_snapshot(&state, now, 80);
+
+        assert_eq!(
+            lines,
+            vec![
+                "Search: fatal | Press Enter to confirm or Esc to cancel                         ",
+                "┌──────────────────────────────────────────────────────────────────────────────┐",
+                "│1-3: Views | Enter: Inspect | o: Wrap | Space: Pause | t: Tail | /: Search | y│",
+                "└──────────────────────────────────────────────────────────────────────────────┘",
+            ]
+        );
+    }
+
+    #[test]
+    fn footer_recent_status_message_matches_golden_snapshot() {
+        let mut state = app_state_with_logs();
+        let now = Instant::now();
+        state.status_message = Some(("Log copied to clipboard".to_string(), now));
+
+        let lines = render_footer_snapshot(&state, now, 72);
+
+        assert_eq!(
+            lines,
+            vec![
+                "Log copied to clipboard                                                 ",
+                "┌──────────────────────────────────────────────────────────────────────┐",
+                "│1-3: Views | Enter: Inspect | o: Wrap | Space: Pause | t: Tail | /: Se│",
+                "└──────────────────────────────────────────────────────────────────────┘",
+            ]
+        );
+    }
+
+    #[test]
+    fn footer_expired_status_message_falls_back_to_normal_snapshot() {
+        let mut state = app_state_with_logs();
+        let now = Instant::now();
+        state.status_message = Some((
+            "Log copied to clipboard".to_string(),
+            now - FooterStatus::STATUS_MESSAGE_TTL - Duration::from_secs(1),
+        ));
+
+        let lines = render_footer_snapshot(&state, now, 96);
+
+        assert_eq!(
+            lines[0],
+            "🟢  Connected |   3 logs | Filters [E W I D V] |   3/3   | RUNNING | TAIL | Logs                 "
+        );
     }
 }
