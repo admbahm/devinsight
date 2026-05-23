@@ -1315,4 +1315,55 @@ mod tests {
             "🟢  Connected |   3 logs | Filters [E W I D V] |   3/3   | RUNNING | TAIL | Logs                 "
         );
     }
+
+    #[test]
+    fn app_state_tracks_ingestion_rates() {
+        let mut state = AppState::new(None);
+        assert_eq!(state.logs_received_this_sec, 0);
+
+        let entries = vec![
+            LogEntry {
+                level: LogLevel::Info,
+                timestamp: "03-21 10:00:00".to_string(),
+                pid: None,
+                tid: None,
+                tag: "Test".to_string(),
+                message: "Msg 1".to_string(),
+            },
+            LogEntry {
+                level: LogLevel::Info,
+                timestamp: "03-21 10:00:01".to_string(),
+                pid: None,
+                tid: None,
+                tag: "Test".to_string(),
+                message: "Msg 2".to_string(),
+            },
+        ];
+        state.add_logs(entries);
+        assert_eq!(state.logs_received_this_sec, 2);
+
+        // Force-expire the rate update timer (pretend 2 seconds elapsed)
+        state.last_rate_update = Instant::now() - Duration::from_secs(2);
+        state.update_rates();
+
+        assert_eq!(state.logs_received_this_sec, 0);
+        assert_eq!(state.log_rates.back().cloned(), Some(2));
+    }
+
+    #[test]
+    fn app_state_ingestion_rates_overflow_cap() {
+        let mut state = AppState::new(None);
+        
+        // Simulating 65 rate updates
+        for i in 0..65 {
+            state.logs_received_this_sec = i as u64;
+            state.last_rate_update = Instant::now() - Duration::from_secs(2);
+            state.update_rates();
+        }
+
+        assert_eq!(state.log_rates.len(), 60);
+        // The oldest rate values (0..5) should have been popped off
+        assert_eq!(state.log_rates.front().cloned(), Some(5));
+        assert_eq!(state.log_rates.back().cloned(), Some(64));
+    }
 }
