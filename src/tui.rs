@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
+    widgets::{BarChart, Block, Borders, List, ListItem, Paragraph, Sparkline, Tabs},
     Frame, Terminal,
 };
 use std::collections::VecDeque;
@@ -127,6 +127,9 @@ pub struct AppState {
     pub last_notification: Option<Instant>,
     pub wrap_mode: bool,
     pub inspector_active: bool,
+    pub log_rates: VecDeque<u64>,
+    pub last_rate_update: Instant,
+    pub logs_received_this_sec: u64,
 }
 
 pub struct StorageInfo {
@@ -184,6 +187,20 @@ impl AppState {
             last_notification: None,
             wrap_mode: false,
             inspector_active: false,
+            log_rates: VecDeque::from(vec![0; 200]), // Pre-fill 200 intervals
+            last_rate_update: Instant::now(),
+            logs_received_this_sec: 0,
+        }
+    }
+
+    pub fn update_rates(&mut self) {
+        if self.last_rate_update.elapsed() >= Duration::from_secs(1) {
+            self.log_rates.push_back(self.logs_received_this_sec);
+            if self.log_rates.len() > 200 {
+                self.log_rates.pop_front();
+            }
+            self.logs_received_this_sec = 0;
+            self.last_rate_update = Instant::now();
         }
     }
 
@@ -193,6 +210,7 @@ impl AppState {
 
     pub fn add_logs(&mut self, entries: Vec<LogEntry>) {
         if !self.paused {
+            self.logs_received_this_sec += entries.len() as u64;
             let mut needs_full_filter_update = false;
 
             for entry in entries {
@@ -403,6 +421,7 @@ impl Tui {
 
         // Main event loop
         loop {
+            self.state.update_rates();
             // Process any new logs
             let mut batch = Vec::new();
             while let Ok(log) = self.log_rx.try_recv() {
@@ -864,30 +883,90 @@ impl Tui {
     }
 
     fn draw_stats(f: &mut Frame, area: Rect, state: &AppState) {
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(35), Constraint::Percentage(65)].as_ref())
+            .split(area);
+
+        let left_area = main_chunks[0];
+        let right_area = main_chunks[1];
+
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(right_area);
+
+        let barchart_area = right_chunks[0];
+        let sparkline_area = right_chunks[1];
+
         let stats = format!(
-            "\nLog Statistics:\n\
-            \n\
+            "\n\
             🔴 Errors:   {}\n\
             ⚠️  Warnings: {}\n\
             ℹ️  Info:     {}\n\
             🔧 Debug:    {}\n\
             📝 Verbose:  {}\n\
             \n\
-            Total Logs: {}\n\
-            Memory Usage: {} entries",
+            Total Logs:   {}\n\
+            Memory Usage: {}/{} entries\n\
+            \n\
+            Ingestion Rate:\n\
+            Last Second:  {} logs/sec\n\
+            Peak Rate:    {} logs/sec",
             state.stats.error_count,
             state.stats.warning_count,
             state.stats.info_count,
             state.stats.debug_count,
             state.stats.verbose_count,
             state.logs.len(),
+            state.filtered_logs.len(),
             state.logs.capacity(),
+            state.log_rates.back().cloned().unwrap_or(0),
+            state.log_rates.iter().max().cloned().unwrap_or(0),
         );
 
         let stats_widget = Paragraph::new(stats)
-            .block(Block::default().borders(Borders::ALL).title("Statistics"))
+            .block(Block::default().borders(Borders::ALL).title(" Summary "))
             .style(Style::default().fg(Color::White));
-        f.render_widget(stats_widget, area);
+        f.render_widget(stats_widget, left_area);
+
+        let bar_data = [
+            ("ERROR", state.stats.error_count as u64),
+            ("WARN", state.stats.warning_count as u64),
+            ("INFO", state.stats.info_count as u64),
+            ("DEBUG", state.stats.debug_count as u64),
+            ("VERBOSE", state.stats.verbose_count as u64),
+        ];
+
+        let bar_chart = BarChart::default()
+            .block(Block::default().borders(Borders::ALL).title(" Log Level Distribution "))
+            .data(&bar_data)
+            .bar_width(7)
+            .bar_gap(2)
+            .value_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+            .label_style(Style::default().fg(Color::White))
+            .style(Style::default().fg(Color::Cyan));
+        f.render_widget(bar_chart, barchart_area);
+
+        let sparkline_width = sparkline_area.width.saturating_sub(2) as usize;
+        let rates_data: Vec<u64> = if state.log_rates.len() > sparkline_width {
+            state.log_rates
+                .iter()
+                .skip(state.log_rates.len() - sparkline_width)
+                .cloned()
+                .collect()
+        } else {
+            let padding_len = sparkline_width - state.log_rates.len();
+            let mut padded = vec![0; padding_len];
+            padded.extend(state.log_rates.iter().cloned());
+            padded
+        };
+
+        let sparkline = Sparkline::default()
+            .block(Block::default().borders(Borders::ALL).title(" Log Ingestion Rate (logs/sec) "))
+            .data(&rates_data)
+            .style(Style::default().fg(Color::Green));
+        f.render_widget(sparkline, sparkline_area);
     }
 
     fn draw_storage(f: &mut Frame, area: Rect, state: &AppState) {
@@ -1247,5 +1326,56 @@ mod tests {
             lines[0],
             "🟢  Connected |   3 logs | Filters [E W I D V] |   3/3   | RUNNING | TAIL | Logs                 "
         );
+    }
+
+    #[test]
+    fn app_state_tracks_ingestion_rates() {
+        let mut state = AppState::new(None);
+        assert_eq!(state.logs_received_this_sec, 0);
+
+        let entries = vec![
+            LogEntry {
+                level: LogLevel::Info,
+                timestamp: "03-21 10:00:00".to_string(),
+                pid: None,
+                tid: None,
+                tag: "Test".to_string(),
+                message: "Msg 1".to_string(),
+            },
+            LogEntry {
+                level: LogLevel::Info,
+                timestamp: "03-21 10:00:01".to_string(),
+                pid: None,
+                tid: None,
+                tag: "Test".to_string(),
+                message: "Msg 2".to_string(),
+            },
+        ];
+        state.add_logs(entries);
+        assert_eq!(state.logs_received_this_sec, 2);
+
+        // Force-expire the rate update timer (pretend 2 seconds elapsed)
+        state.last_rate_update = Instant::now() - Duration::from_secs(2);
+        state.update_rates();
+
+        assert_eq!(state.logs_received_this_sec, 0);
+        assert_eq!(state.log_rates.back().cloned(), Some(2));
+    }
+
+    #[test]
+    fn app_state_ingestion_rates_overflow_cap() {
+        let mut state = AppState::new(None);
+        
+        // Simulating 205 rate updates
+        for i in 0..205 {
+            state.logs_received_this_sec = i as u64;
+            state.last_rate_update = Instant::now() - Duration::from_secs(2);
+            state.update_rates();
+        }
+
+        assert_eq!(state.log_rates.len(), 200);
+        // The oldest rate values (0..5) should have been popped off
+        assert_eq!(state.log_rates.front().cloned(), Some(5));
+        assert_eq!(state.log_rates.back().cloned(), Some(204));
     }
 }
