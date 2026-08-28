@@ -38,6 +38,75 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
 
         self.assertTrue(any("PASS cannot contain" in error for error in errors))
 
+    def test_schema_rejects_non_string_location_symbol(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["locations"][0]["symbol"] = 42
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("locations[0].symbol" in error and "string" in error for error in errors)
+        )
+
+    def test_parser_rejects_non_json_numeric_constants(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                text = json.dumps(self.example)[:-1] + f', "non_json": {constant}}}'
+
+                with self.assertRaisesRegex(ValueError, "not a valid JSON value"):
+                    validator.parse_document(text)
+
+    def test_inconclusive_rejects_actionable_finding(self):
+        for classification in ("PROVEN", "HIGH_CONFIDENCE"):
+            with self.subTest(classification=classification):
+                document = copy.deepcopy(self.example)
+                document["review"]["verdict"] = "INCONCLUSIVE"
+                document["findings"][0]["classification"] = classification
+
+                errors = validator.validate(document)
+
+                self.assertTrue(
+                    any("INCONCLUSIVE cannot contain" in error for error in errors)
+                )
+
+    def test_proven_rejects_unexecuted_evidence_and_blank_semantic_records(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["evidence"] = [
+            {
+                "type": "test",
+                "detail": "No test was executed.",
+                "base": "NOT_RUN",
+                "head": "NOT_RUN",
+            }
+        ]
+        finding["reproduction"] = ["   "]
+        finding["attempted_disproof"] = ["\t"]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any(
+                "reproduction[0]" in error
+                and "must contain non-whitespace text" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "attempted_disproof[0]" in error
+                and "must contain non-whitespace text" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "evidence[0]" in error
+                and "must show at least one PASS or FAIL" in error
+                for error in errors
+            )
+        )
+
     def test_actionable_finding_requires_attempted_disproof(self):
         document = copy.deepcopy(self.example)
         document["findings"][0]["attempted_disproof"] = []

@@ -97,15 +97,19 @@ A completed automated review must also be serializable as JSON conforming to `.r
 The deterministic validator is:
 
 ```bash
+python3 -m pip install -r scripts/requirements-review-evidence.txt
 python3 scripts/validate_review_evidence.py path/to/evidence.json
 ```
 
-The validator enforces review-policy relationships in addition to basic structure:
+The validator uses `.review/review-evidence.schema.json` as the structural authority
+and enforces review-policy relationships in addition to that structure:
 
 - `FAIL` requires at least one `PROVEN` or `HIGH_CONFIDENCE` finding.
-- `PASS` cannot contain an actionable finding.
-- actionable findings require reproduction and attempted-disproof records.
-- `PROVEN` findings require executable evidence or an unavoidable code path.
+- any actionable finding requires a `FAIL` verdict.
+- actionable findings require non-blank reproduction and attempted-disproof records.
+- `PROVEN` findings require executed evidence or an unavoidable code path.
+- executable evidence with structured outcomes cannot support `PROVEN` when no
+  outcome shows a `PASS` or `FAIL` execution.
 - finding IDs must be unique.
 
 The model may investigate and generate evidence. The validator decides whether that evidence satisfies the contract.
