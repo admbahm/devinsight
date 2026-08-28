@@ -1,0 +1,29 @@
+name: Review Evidence
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - ".review/**"
+      - "scripts/validate_review_evidence.py"
+      - "scripts/test_validate_review_evidence.py"
+      - ".github/workflows/review-evidence.yml"
+      - "docs/review-protocol.md"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - ".review/**"
+      - "scripts/validate_review_evidence.py"
+      - "scripts/test_validate_review_evidence.py"
+      - ".github/workflows/review-evidence.yml"
+      - "docs/review-protocol.md"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run validator tests
+        run: python3 scripts/test_validate_review_evidence.py
+      - name: Validate canonical benchmark evidence
+        run: python3 scripts/validate_review_evidence.py .review/examples/benchmark-001.json
