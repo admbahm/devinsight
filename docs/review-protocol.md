@@ -77,7 +77,7 @@ locations:
   - path: src/example.rs
     symbol: example_function
 evidence:
-  - type: test | command | code_path | history
+  - type: test | command | code_path | history | experiment
     detail: "..."
 expected: "..."
 observed: "..."
@@ -89,6 +89,28 @@ remaining_uncertainty: "none" | "..."
 ```
 
 Non-actionable risks may be recorded as `POSSIBLE`, but they must be clearly separated from defects.
+
+## Machine-Readable Evidence
+
+A completed automated review must also be serializable as JSON conforming to `.review/review-evidence.schema.json`.
+
+The deterministic validator is:
+
+```bash
+python3 scripts/validate_review_evidence.py path/to/evidence.json
+```
+
+The validator enforces review-policy relationships in addition to basic structure:
+
+- `FAIL` requires at least one `PROVEN` or `HIGH_CONFIDENCE` finding.
+- `PASS` cannot contain an actionable finding.
+- actionable findings require reproduction and attempted-disproof records.
+- `PROVEN` findings require executable evidence or an unavoidable code path.
+- finding IDs must be unique.
+
+The model may investigate and generate evidence. The validator decides whether that evidence satisfies the contract.
+
+`.review/examples/benchmark-001.json` is the first canonical evidence artifact and captures the controlled PR #14 retention benchmark.
 
 ## Review Verdict
 
