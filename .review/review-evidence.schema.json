@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/admbahm/devinsight/.review/review-evidence.schema.json",
+  "title": "DevInsight Review Evidence",
+  "type": "object",
+  "required": ["schema_version", "review", "findings"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "review": {
+      "type": "object",
+      "required": ["repository", "pr", "base_sha", "head_sha", "verdict"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "pr": { "type": "integer", "minimum": 1 },
+        "base_sha": { "type": "string", "minLength": 7 },
+        "head_sha": { "type": "string", "minLength": 7 },
+        "verdict": { "enum": ["PASS", "FAIL", "INCONCLUSIVE"] }
+      },
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "classification",
+          "severity",
+          "claim",
+          "affected_behavior",
+          "locations",
+          "evidence",
+          "expected",
+          "observed",
+          "reproduction",
+          "attempted_disproof",
+          "remaining_uncertainty"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^DI-REV-[0-9]+$" },
+          "classification": { "enum": ["PROVEN", "HIGH_CONFIDENCE", "POSSIBLE", "STYLE"] },
+          "severity": { "enum": ["critical", "high", "medium", "low"] },
+          "claim": { "type": "string", "minLength": 1 },
+          "affected_behavior": { "type": "string", "minLength": 1 },
+          "locations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "symbol": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["type", "detail"],
+              "properties": {
+                "type": { "enum": ["test", "command", "code_path", "history", "experiment"] },
+                "detail": { "type": "string", "minLength": 1 },
+                "base": { "enum": ["PASS", "FAIL", "NOT_RUN", "UNKNOWN"] },
+                "head": { "enum": ["PASS", "FAIL", "NOT_RUN", "UNKNOWN"] }
+              },
+              "additionalProperties": true
+            }
+          },
+          "expected": { "type": "string", "minLength": 1 },
+          "observed": { "type": "string", "minLength": 1 },
+          "reproduction": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "attempted_disproof": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "remaining_uncertainty": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
