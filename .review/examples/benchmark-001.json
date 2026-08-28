@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "review": {
     "repository": "admbahm/devinsight",
     "pr": 14,
@@ -44,6 +44,7 @@
         },
         {
           "type": "code_path",
+          "qualification": "UNAVOIDABLE",
           "detail": "The PR trims using only pre-batch length and then inserts the full batch without another capacity check."
         }
       ],

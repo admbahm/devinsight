@@ -20,7 +20,7 @@ EXAMPLE_PATH = Path(__file__).parents[1] / ".review" / "examples" / "benchmark-0
 class ReviewEvidenceValidatorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.example = json.loads(EXAMPLE_PATH.read_text())
+        cls.example = validator.parse_document(EXAMPLE_PATH.read_text())
 
     def make_pass_review(self):
         document = copy.deepcopy(self.example)
@@ -65,16 +65,22 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(document))
 
+    def assert_duplicate_keys_rejected(self, text):
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            validator.parse_document(text)
+
     def test_benchmark_001_is_valid(self):
         self.assertEqual(validator.validate(self.example), [])
 
-    def test_schema_version_1_is_rejected(self):
-        document = copy.deepcopy(self.example)
-        document["schema_version"] = "1"
+    def test_previous_schema_versions_are_rejected(self):
+        for version in ("1", "2"):
+            with self.subTest(version=version):
+                document = copy.deepcopy(self.example)
+                document["schema_version"] = version
 
-        errors = validator.validate(document)
+                errors = validator.validate(document)
 
-        self.assertTrue(any("schema_version" in error for error in errors))
+                self.assertTrue(any("schema_version" in error for error in errors))
 
     def test_schema_requires_review_level_verification_collection(self):
         document = copy.deepcopy(self.example)
@@ -115,6 +121,7 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                     finding["evidence"] = [
                         {
                             "type": "code_path",
+                            "qualification": "UNAVOIDABLE",
                             "detail": "The failing path is unconditional.",
                         }
                     ]
@@ -237,24 +244,58 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
         errors = validator.validate(document)
 
         self.assertTrue(
-            any("HIGH_CONFIDENCE findings require code_path" in error for error in errors)
+            any(
+                "HIGH_CONFIDENCE findings require STRONG or UNAVOIDABLE code_path"
+                in error
+                for error in errors
+            )
         )
 
-    def test_high_confidence_accepts_code_path_evidence(self):
+    def test_high_confidence_rejects_observed_code_path_evidence(self):
         document = copy.deepcopy(self.example)
         finding = document["findings"][0]
         finding["classification"] = "HIGH_CONFIDENCE"
         finding["evidence"] = [
-            {"type": "code_path", "detail": "The failing branch is unconditional."}
+            {
+                "type": "code_path",
+                "qualification": "OBSERVED",
+                "detail": "A conditional path was observed.",
+            }
         ]
 
-        self.assertEqual(validator.validate(document), [])
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("require STRONG or UNAVOIDABLE" in error for error in errors)
+        )
+
+    def test_high_confidence_accepts_strong_or_unavoidable_code_path_evidence(self):
+        for qualification in ("STRONG", "UNAVOIDABLE"):
+            with self.subTest(qualification=qualification):
+                document = copy.deepcopy(self.example)
+                finding = document["findings"][0]
+                finding["classification"] = "HIGH_CONFIDENCE"
+                finding["evidence"] = [
+                    {
+                        "type": "code_path",
+                        "qualification": qualification,
+                        "detail": "The code path strongly supports the finding.",
+                    }
+                ]
+
+                self.assertEqual(validator.validate(document), [])
 
     def test_high_confidence_rejects_blank_code_path_detail(self):
         document = copy.deepcopy(self.example)
         finding = document["findings"][0]
         finding["classification"] = "HIGH_CONFIDENCE"
-        finding["evidence"] = [{"type": "code_path", "detail": " \t "}]
+        finding["evidence"] = [
+            {
+                "type": "code_path",
+                "qualification": "STRONG",
+                "detail": " \t ",
+            }
+        ]
 
         errors = validator.validate(document)
 
@@ -265,6 +306,117 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_code_path_requires_qualification(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["evidence"] = [
+            {"type": "code_path", "detail": "No qualification is recorded."}
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("qualification" in error and "required property" in error for error in errors)
+        )
+
+    def test_code_path_rejects_unknown_qualification(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["evidence"] = [
+            {
+                "type": "code_path",
+                "qualification": "SPECULATIVE",
+                "detail": "The qualification is outside the contract.",
+            }
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("qualification" in error and "not one of" in error for error in errors)
+        )
+
+    def test_non_code_path_rejects_qualification(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["evidence"] = [
+            {
+                "type": "test",
+                "qualification": "UNAVOIDABLE",
+                "detail": "The completed test does not use code-path qualification.",
+                "head": "FAIL",
+            }
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(any("qualification" in error for error in errors))
+
+    def test_proven_rejects_observed_or_strong_code_path_without_execution(self):
+        for qualification in ("OBSERVED", "STRONG"):
+            with self.subTest(qualification=qualification):
+                document = copy.deepcopy(self.example)
+                document["findings"][0]["evidence"] = [
+                    {
+                        "type": "code_path",
+                        "qualification": qualification,
+                        "detail": "The path does not establish an unavoidable failure.",
+                    }
+                ]
+
+                errors = validator.validate(document)
+
+                self.assertTrue(
+                    any("PROVEN findings require" in error for error in errors)
+                )
+
+    def test_proven_accepts_unavoidable_code_path_without_execution(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["evidence"] = [
+            {
+                "type": "code_path",
+                "qualification": "UNAVOIDABLE",
+                "detail": "The failing branch is unavoidable for the accepted input.",
+            }
+        ]
+
+        self.assertEqual(validator.validate(document), [])
+
+    def test_multiple_observed_code_paths_do_not_substitute_for_qualification(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["classification"] = "HIGH_CONFIDENCE"
+        finding["evidence"] = [
+            {
+                "type": "code_path",
+                "qualification": "OBSERVED",
+                "detail": f"Ordinary path {index} was observed.",
+            }
+            for index in range(3)
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("require STRONG or UNAVOIDABLE" in error for error in errors)
+        )
+
+    def test_unavoidable_code_path_does_not_hide_unexecuted_proven_evidence(self):
+        document = copy.deepcopy(self.example)
+        document["findings"][0]["evidence"] = [
+            {
+                "type": "code_path",
+                "qualification": "UNAVOIDABLE",
+                "detail": "The failing path is unavoidable.",
+            },
+            {
+                "type": "test",
+                "detail": "The test did not complete.",
+                "head": "NOT_RUN",
+            },
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(any("evidence[1]" in error for error in errors))
 
     def test_proven_rejects_executable_evidence_without_outcomes(self):
         for evidence_type in ("test", "command", "experiment"):
@@ -345,7 +497,11 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
         document["findings"][0]["evidence"] = [
             {"type": "test", "detail": "This test did not run.", "head": "NOT_RUN"},
             {"type": "test", "detail": "This test completed.", "head": "FAIL"},
-            {"type": "code_path", "detail": "The failing path is unconditional."},
+            {
+                "type": "code_path",
+                "qualification": "UNAVOIDABLE",
+                "detail": "The failing path is unconditional.",
+            },
         ]
 
         errors = validator.validate(document)
@@ -396,6 +552,37 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "not a valid JSON value"):
                     validator.parse_document(text)
 
+    def test_parser_rejects_duplicate_top_level_keys(self):
+        self.assert_duplicate_keys_rejected(
+            '{"schema_version":"3","schema_version":"2"}'
+        )
+
+    def test_parser_rejects_duplicate_review_verdict(self):
+        self.assert_duplicate_keys_rejected(
+            '{"review":{"verdict":"FAIL","verdict":"PASS"}}'
+        )
+
+    def test_parser_rejects_duplicate_verification_outcome(self):
+        self.assert_duplicate_keys_rejected(
+            '{"verification":[{"outcome":"FAIL","outcome":"PASS"}]}'
+        )
+
+    def test_parser_rejects_duplicate_nested_evidence_properties(self):
+        self.assert_duplicate_keys_rejected(
+            '{"findings":[{"evidence":[{"detail":"first","detail":"second"}]}]}'
+        )
+
+    def test_parser_rejects_identical_duplicate_values_at_every_nesting_level(self):
+        documents = (
+            '{"schema_version":"3","schema_version":"3"}',
+            '{"review":{"verdict":"PASS","verdict":"PASS"}}',
+            '{"verification":[{"outcome":"PASS","outcome":"PASS"}]}',
+            '{"findings":[{"evidence":[{"detail":"same","detail":"same"}]}]}',
+        )
+        for text in documents:
+            with self.subTest(text=text):
+                self.assert_duplicate_keys_rejected(text)
+
     def test_valid_persisted_evidence_passes_cli_discovery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / ".review" / "evidence"
@@ -441,6 +628,24 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 1)
             self.assertIn("nested/invalid.json", result.stderr)
+
+    def test_duplicate_key_persisted_artifact_fails_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".review" / "evidence"
+            self.write_document(root / "valid.json", self.example)
+            duplicate = json.dumps(self.make_pass_review()).replace(
+                '"verdict": "PASS"',
+                '"verdict": "FAIL", "verdict": "PASS"',
+            )
+            duplicate_path = root / "nested" / "duplicate.json"
+            duplicate_path.parent.mkdir(parents=True, exist_ok=True)
+            duplicate_path.write_text(duplicate)
+
+            result = self.run_persisted_cli(root)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("nested/duplicate.json", result.stderr)
+            self.assertIn("duplicate object key", result.stderr)
 
 
 if __name__ == "__main__":

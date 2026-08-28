@@ -9,6 +9,7 @@ from jsonschema.validators import validator_for
 ACTIONABLE = {"PROVEN", "HIGH_CONFIDENCE"}
 EXECUTABLE_EVIDENCE = {"test", "command", "experiment"}
 EXECUTED_OUTCOMES = {"PASS", "FAIL"}
+HIGH_CONFIDENCE_CODE_PATH_QUALIFICATIONS = {"STRONG", "UNAVOIDABLE"}
 INCOMPLETE_VERIFICATION_OUTCOMES = {"NOT_RUN", "UNKNOWN"}
 REPOSITORY_ROOT = Path(__file__).parents[1]
 SCHEMA_PATH = REPOSITORY_ROOT / ".review" / "review-evidence.schema.json"
@@ -27,8 +28,21 @@ def reject_non_json_constant(value):
     raise ValueError(f"{value} is not a valid JSON value")
 
 
+def reject_duplicate_object_keys(pairs):
+    document = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate object key: {key!r}")
+        document[key] = value
+    return document
+
+
 def parse_document(text):
-    return json.loads(text, parse_constant=reject_non_json_constant)
+    return json.loads(
+        text,
+        parse_constant=reject_non_json_constant,
+        object_pairs_hook=reject_duplicate_object_keys,
+    )
 
 
 def format_json_path(parts):
@@ -42,7 +56,7 @@ def format_json_path(parts):
 
 
 def load_structural_validator():
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = parse_document(SCHEMA_PATH.read_text())
     validator_class = validator_for(schema)
     validator_class.check_schema(schema)
     return validator_class(schema)
@@ -133,14 +147,16 @@ def validate_finding_policy(errors, finding, index):
             )
 
     if classification == "HIGH_CONFIDENCE":
-        has_code_path = any(
-            item["type"] == "code_path" for item in finding["evidence"]
+        has_qualifying_code_path = any(
+            item["type"] == "code_path"
+            and item["qualification"] in HIGH_CONFIDENCE_CODE_PATH_QUALIFICATIONS
+            for item in finding["evidence"]
         )
-        if not has_code_path:
+        if not has_qualifying_code_path:
             fail(
                 errors,
                 f"{path}.evidence",
-                "HIGH_CONFIDENCE findings require code_path evidence",
+                "HIGH_CONFIDENCE findings require STRONG or UNAVOIDABLE code_path evidence",
             )
         return
 
@@ -151,7 +167,10 @@ def validate_finding_policy(errors, finding, index):
     unavoidable = False
     for evidence_index, item in enumerate(finding["evidence"]):
         evidence_type = item["type"]
-        if evidence_type == "code_path":
+        if (
+            evidence_type == "code_path"
+            and item["qualification"] == "UNAVOIDABLE"
+        ):
             unavoidable = True
         if evidence_type not in EXECUTABLE_EVIDENCE:
             continue

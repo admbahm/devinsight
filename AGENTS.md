@@ -50,11 +50,15 @@ Prefer a failing test over a speculative comment.
 
 ## Machine-Readable Verdict Evidence
 
-Automated review artifacts use schema version `2` and record review-level
+Automated review artifacts use schema version `3` and record review-level
 verification separately from finding-level evidence.
 
 - Finding-level `test`, `command`, and `experiment` evidence counts as executed
   only when `base` or `head` records a completed `PASS` or `FAIL` outcome.
+- Finding-level `code_path` evidence records a structured qualification:
+  `OBSERVED` does not independently admit an actionable finding, `STRONG` can
+  support `HIGH_CONFIDENCE`, and `UNAVOIDABLE` can support either actionable
+  classification.
 - `FAIL` requires at least one admissible `PROVEN` or `HIGH_CONFIDENCE` finding.
 - `PASS` requires no actionable findings, at least one required review-level
   verification item, and `PASS` outcomes for every required verification item.

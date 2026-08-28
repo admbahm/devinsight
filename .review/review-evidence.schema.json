@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "review", "verification", "findings"],
   "properties": {
-    "schema_version": { "const": "2" },
+    "schema_version": { "const": "3" },
     "review": {
       "type": "object",
       "required": ["repository", "pr", "base_sha", "head_sha", "verdict"],
@@ -80,9 +80,20 @@
               "properties": {
                 "type": { "enum": ["test", "command", "code_path", "history", "experiment"] },
                 "detail": { "type": "string", "minLength": 1 },
+                "qualification": { "enum": ["OBSERVED", "STRONG", "UNAVOIDABLE"] },
                 "base": { "enum": ["PASS", "FAIL", "NOT_RUN", "UNKNOWN"] },
                 "head": { "enum": ["PASS", "FAIL", "NOT_RUN", "UNKNOWN"] }
               },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": { "type": { "const": "code_path" } },
+                    "required": ["type"]
+                  },
+                  "then": { "required": ["qualification"] },
+                  "else": { "not": { "required": ["qualification"] } }
+                }
+              ],
               "additionalProperties": true
             }
           },

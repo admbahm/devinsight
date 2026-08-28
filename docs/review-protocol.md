@@ -78,6 +78,7 @@ locations:
     symbol: example_function
 evidence:
   - type: test | command | code_path | history | experiment
+    qualification: OBSERVED | STRONG | UNAVOIDABLE  # code_path only
     detail: "..."
 expected: "..."
 observed: "..."
@@ -94,7 +95,7 @@ Non-actionable risks may be recorded as `POSSIBLE`, but they must be clearly sep
 
 A completed automated review must also be serializable as JSON conforming to `.review/review-evidence.schema.json`.
 
-Schema version `2` separates two evidence scopes:
+Schema version `3` separates two evidence scopes:
 
 - `findings[].evidence` supports the classification of an individual finding.
 - top-level `verification` records whether the review's required verification
@@ -117,11 +118,20 @@ python3 scripts/validate_review_evidence.py --persisted .review/evidence
 The validator uses `.review/review-evidence.schema.json` as the structural authority
 and enforces review-policy relationships in addition to that structure:
 
+- JSON object-member names must be unique at every nesting level; duplicates
+  are rejected during parsing even when the repeated values are identical.
 - `FAIL` requires at least one `PROVEN` or `HIGH_CONFIDENCE` finding.
 - any actionable finding requires a `FAIL` verdict.
 - actionable findings require non-blank reproduction and attempted-disproof records.
-- `HIGH_CONFIDENCE` findings require non-blank `code_path` evidence.
-- `PROVEN` findings require executed evidence or an unavoidable code path.
+- every `code_path` evidence record requires one structured qualification:
+  - `OBSERVED` records an ordinary path and does not independently admit an
+    actionable classification;
+  - `STRONG` can support `HIGH_CONFIDENCE` but not `PROVEN`;
+  - `UNAVOIDABLE` can support `HIGH_CONFIDENCE` or `PROVEN`.
+- `HIGH_CONFIDENCE` findings require `STRONG` or `UNAVOIDABLE` `code_path`
+  evidence.
+- `PROVEN` findings require executed evidence or `UNAVOIDABLE` `code_path`
+  evidence.
 - finding-level executable evidence never implies execution from prose; each
   `test`, `command`, or `experiment` record must include at least one structured
   `base` or `head` outcome of `PASS` or `FAIL` to support `PROVEN`.
