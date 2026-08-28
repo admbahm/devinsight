@@ -9,10 +9,13 @@ from jsonschema.validators import validator_for
 ACTIONABLE = {"PROVEN", "HIGH_CONFIDENCE"}
 EXECUTABLE_EVIDENCE = {"test", "command", "experiment"}
 EXECUTED_OUTCOMES = {"PASS", "FAIL"}
-SCHEMA_PATH = Path(__file__).parents[1] / ".review" / "review-evidence.schema.json"
+INCOMPLETE_VERIFICATION_OUTCOMES = {"NOT_RUN", "UNKNOWN"}
+REPOSITORY_ROOT = Path(__file__).parents[1]
+SCHEMA_PATH = REPOSITORY_ROOT / ".review" / "review-evidence.schema.json"
+PERSISTED_EVIDENCE_ROOT = REPOSITORY_ROOT / ".review" / "evidence"
 PROVEN_EXECUTION_ERROR = (
-    "PROVEN executable evidence with structured outcomes must show at least one "
-    "PASS or FAIL execution"
+    "PROVEN executable evidence must include at least one structured PASS or FAIL "
+    "outcome"
 )
 
 
@@ -68,6 +71,15 @@ def validate_semantic_strings(errors, document):
     review = document["review"]
     for key in ("repository", "base_sha", "head_sha"):
         require_nonblank(errors, review[key], f"review.{key}")
+
+    for verification_index, item in enumerate(document["verification"]):
+        verification_path = f"verification[{verification_index}]"
+        for key in ("id", "detail"):
+            require_nonblank(errors, item[key], f"{verification_path}.{key}")
+        if "command" in item:
+            require_nonblank(
+                errors, item["command"], f"{verification_path}.command"
+            )
 
     for finding_index, finding in enumerate(document["findings"]):
         finding_path = f"findings[{finding_index}]"
@@ -145,10 +157,10 @@ def validate_finding_policy(errors, finding, index):
             continue
 
         outcomes = [item[key] for key in ("base", "head") if key in item]
-        explicitly_unexecuted = outcomes and not any(
+        has_completed_outcome = any(
             outcome in EXECUTED_OUTCOMES for outcome in outcomes
         )
-        if explicitly_unexecuted:
+        if not has_completed_outcome:
             fail(
                 errors,
                 f"{path}.evidence[{evidence_index}]",
@@ -165,6 +177,44 @@ def validate_finding_policy(errors, finding, index):
         )
 
 
+def validate_verification_policy(errors, document):
+    seen_ids = set()
+    required_items = []
+    for index, item in enumerate(document["verification"]):
+        verification_id = item["id"]
+        if verification_id in seen_ids:
+            fail(errors, f"verification[{index}].id", "must be unique")
+        seen_ids.add(verification_id)
+        if item["required"]:
+            required_items.append((index, item))
+
+    verdict = document["review"]["verdict"]
+    if verdict == "PASS":
+        if not required_items:
+            fail(
+                errors,
+                "verification",
+                "PASS requires at least one required review-level verification item",
+            )
+        for index, item in required_items:
+            if item["outcome"] != "PASS":
+                fail(
+                    errors,
+                    f"verification[{index}].outcome",
+                    "required verification must have outcome PASS for a PASS verdict",
+                )
+
+    if verdict == "INCONCLUSIVE" and not any(
+        item["outcome"] in INCOMPLETE_VERIFICATION_OUTCOMES
+        for _, item in required_items
+    ):
+        fail(
+            errors,
+            "verification",
+            "INCONCLUSIVE requires a required verification item with outcome NOT_RUN or UNKNOWN",
+        )
+
+
 def validate(document):
     structural_errors = validate_structure(document)
     if structural_errors:
@@ -172,6 +222,7 @@ def validate(document):
 
     errors = []
     validate_semantic_strings(errors, document)
+    validate_verification_policy(errors, document)
 
     seen_ids = set()
     classifications = []
@@ -208,19 +259,56 @@ def validate(document):
     return errors
 
 
-def main():
-    if len(sys.argv) != 2:
-        print("usage: validate_review_evidence.py <evidence.json>", file=sys.stderr)
-        return 2
-
-    path = Path(sys.argv[1])
+def validate_file(path):
     try:
         document = parse_document(path.read_text())
     except (OSError, ValueError) as exc:
-        print(f"INVALID: {exc}", file=sys.stderr)
-        return 1
+        return [f"INVALID: {exc}"]
+    return validate(document)
 
-    errors = validate(document)
+
+def discover_persisted_evidence(root):
+    return sorted(path for path in root.rglob("*.json") if path.is_file())
+
+
+def validate_persisted_evidence(root):
+    if not root.is_dir():
+        return [], [f"{root}: persisted evidence directory does not exist"]
+
+    paths = discover_persisted_evidence(root)
+    errors = []
+    for path in paths:
+        for error in validate_file(path):
+            errors.append(f"{path}: {error}")
+    return paths, errors
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] == "--persisted":
+        if len(args) > 2:
+            print(
+                "usage: validate_review_evidence.py --persisted [directory]",
+                file=sys.stderr,
+            )
+            return 2
+        root = Path(args[1]) if len(args) == 2 else PERSISTED_EVIDENCE_ROOT
+        paths, errors = validate_persisted_evidence(root)
+        if errors:
+            print("INVALID persisted review evidence:", file=sys.stderr)
+            for error in errors:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        print(f"VALID persisted review evidence ({len(paths)} artifact(s))")
+        return 0
+
+    if len(args) != 1:
+        print(
+            "usage: validate_review_evidence.py <evidence.json>", file=sys.stderr
+        )
+        return 2
+
+    errors = validate_file(Path(args[0]))
     if errors:
         print("INVALID review evidence:", file=sys.stderr)
         for error in errors:

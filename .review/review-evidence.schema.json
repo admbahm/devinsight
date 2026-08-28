@@ -3,9 +3,9 @@
   "$id": "https://github.com/admbahm/devinsight/.review/review-evidence.schema.json",
   "title": "DevInsight Review Evidence",
   "type": "object",
-  "required": ["schema_version", "review", "findings"],
+  "required": ["schema_version", "review", "verification", "findings"],
   "properties": {
-    "schema_version": { "const": "1" },
+    "schema_version": { "const": "2" },
     "review": {
       "type": "object",
       "required": ["repository", "pr", "base_sha", "head_sha", "verdict"],
@@ -17,6 +17,22 @@
         "verdict": { "enum": ["PASS", "FAIL", "INCONCLUSIVE"] }
       },
       "additionalProperties": true
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "required", "outcome", "detail"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "type": { "enum": ["test", "command", "inspection", "experiment"] },
+          "required": { "type": "boolean" },
+          "outcome": { "enum": ["PASS", "FAIL", "NOT_RUN", "UNKNOWN"] },
+          "detail": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
     },
     "findings": {
       "type": "array",

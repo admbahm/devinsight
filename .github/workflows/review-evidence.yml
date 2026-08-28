@@ -4,7 +4,10 @@ on:
   push:
     branches: [ main ]
     paths:
-      - ".review/**"
+      - ".review/review-evidence.schema.json"
+      - ".review/examples/**"
+      - ".review/evidence/**"
+      - "AGENTS.md"
       - "scripts/validate_review_evidence.py"
       - "scripts/test_validate_review_evidence.py"
       - "scripts/requirements-review-evidence.txt"
@@ -13,7 +16,10 @@ on:
   pull_request:
     branches: [ main ]
     paths:
-      - ".review/**"
+      - ".review/review-evidence.schema.json"
+      - ".review/examples/**"
+      - ".review/evidence/**"
+      - "AGENTS.md"
       - "scripts/validate_review_evidence.py"
       - "scripts/test_validate_review_evidence.py"
       - "scripts/requirements-review-evidence.txt"
@@ -31,3 +37,5 @@ jobs:
         run: python3 scripts/test_validate_review_evidence.py
       - name: Validate canonical benchmark evidence
         run: python3 scripts/validate_review_evidence.py .review/examples/benchmark-001.json
+      - name: Validate all persisted review evidence
+        run: python3 scripts/validate_review_evidence.py --persisted .review/evidence

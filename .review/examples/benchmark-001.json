@@ -1,5 +1,5 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "review": {
     "repository": "admbahm/devinsight",
     "pr": 14,
@@ -7,6 +7,22 @@
     "head_sha": "3a36f86f9c2d2e90e3be4903d503e044b59f8a86",
     "verdict": "FAIL"
   },
+  "verification": [
+    {
+      "id": "retention-regression-base",
+      "type": "test",
+      "required": true,
+      "outcome": "PASS",
+      "detail": "The targeted retention regressions completed successfully on the base commit."
+    },
+    {
+      "id": "retention-regression-head",
+      "type": "test",
+      "required": true,
+      "outcome": "FAIL",
+      "detail": "The targeted retention regressions completed on the PR head and reproduced the bounded-memory violation."
+    }
+  ],
   "findings": [
     {
       "id": "DI-REV-001",
