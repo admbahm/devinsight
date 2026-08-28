@@ -120,6 +120,18 @@ def validate_finding_policy(errors, finding, index):
                 "actionable findings require at least one attempted disproof",
             )
 
+    if classification == "HIGH_CONFIDENCE":
+        has_code_path = any(
+            item["type"] == "code_path" for item in finding["evidence"]
+        )
+        if not has_code_path:
+            fail(
+                errors,
+                f"{path}.evidence",
+                "HIGH_CONFIDENCE findings require code_path evidence",
+            )
+        return
+
     if classification != "PROVEN":
         return
 

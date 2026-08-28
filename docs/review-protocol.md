@@ -107,6 +107,7 @@ and enforces review-policy relationships in addition to that structure:
 - `FAIL` requires at least one `PROVEN` or `HIGH_CONFIDENCE` finding.
 - any actionable finding requires a `FAIL` verdict.
 - actionable findings require non-blank reproduction and attempted-disproof records.
+- `HIGH_CONFIDENCE` findings require non-blank `code_path` evidence.
 - `PROVEN` findings require executed evidence or an unavoidable code path.
 - executable evidence with structured outcomes cannot support `PROVEN` when no
   outcome shows a `PASS` or `FAIL` execution.

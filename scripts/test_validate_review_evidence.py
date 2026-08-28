@@ -69,6 +69,64 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                     any("INCONCLUSIVE cannot contain" in error for error in errors)
                 )
 
+    def test_high_confidence_rejects_history_only_evidence(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["classification"] = "HIGH_CONFIDENCE"
+        finding["evidence"] = [
+            {"type": "history", "detail": "A nearby function once had a similar bug."}
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("HIGH_CONFIDENCE findings require code_path" in error for error in errors)
+        )
+
+    def test_high_confidence_rejects_not_run_test_only_evidence(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["classification"] = "HIGH_CONFIDENCE"
+        finding["evidence"] = [
+            {
+                "type": "test",
+                "detail": "The required runtime was unavailable.",
+                "head": "NOT_RUN",
+            }
+        ]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any("HIGH_CONFIDENCE findings require code_path" in error for error in errors)
+        )
+
+    def test_high_confidence_accepts_code_path_evidence(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["classification"] = "HIGH_CONFIDENCE"
+        finding["evidence"] = [
+            {"type": "code_path", "detail": "The failing branch is unconditional."}
+        ]
+
+        self.assertEqual(validator.validate(document), [])
+
+    def test_high_confidence_rejects_blank_code_path_detail(self):
+        document = copy.deepcopy(self.example)
+        finding = document["findings"][0]
+        finding["classification"] = "HIGH_CONFIDENCE"
+        finding["evidence"] = [{"type": "code_path", "detail": " \t "}]
+
+        errors = validator.validate(document)
+
+        self.assertTrue(
+            any(
+                "evidence[0].detail" in error
+                and "must contain non-whitespace text" in error
+                for error in errors
+            )
+        )
+
     def test_proven_rejects_unexecuted_evidence_and_blank_semantic_records(self):
         document = copy.deepcopy(self.example)
         finding = document["findings"][0]
