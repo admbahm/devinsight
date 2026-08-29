@@ -580,6 +580,20 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                 self.assertIsInstance(document["review"]["pr"], Decimal)
                 self.assertEqual(document["review"]["pr"], expected)
 
+    def test_parser_preserves_large_integer_tokens_across_runtime_boundary(self):
+        for digits in (4300, 4301, 10000):
+            with self.subTest(digits=digits):
+                document = validator.parse_document(
+                    self.document_text_with_pr("9" * digits)
+                )
+                value = document["review"]["pr"]
+
+                self.assertIsInstance(value, int)
+                self.assertGreaterEqual(value, 10 ** (digits - 1))
+                self.assertLess(value, 10**digits)
+                self.assertEqual(value % 1_000_000, 999_999)
+                self.assertEqual(validator.validate(document), [])
+
     def test_schema_rejects_exact_fractional_pr_values(self):
         for representation in (
             "0.99999999999999999",
@@ -617,7 +631,7 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
                 self.assertEqual(validator.validate(document), [])
 
     def test_schema_rejects_zero_and_negative_integer_pr_values(self):
-        for representation in ("0", "0.0", "-1", "-1e3"):
+        for representation in ("0", "0.0", "-1", "-1e3", "-" + "9" * 4301):
             with self.subTest(representation=representation):
                 document = validator.parse_document(
                     self.document_text_with_pr(representation)
@@ -656,6 +670,31 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("fractional-pr.json", result.stderr)
             self.assertIn("review.pr", result.stderr)
+
+    def test_single_file_cli_accepts_large_integer_runtime_boundary(self):
+        for digits in (4300, 4301):
+            with self.subTest(digits=digits):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / f"integer-{digits}.json"
+                    path.write_text(self.document_text_with_pr("9" * digits))
+
+                    result = self.run_single_cli(path)
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("VALID review evidence", result.stdout)
+
+    def test_persisted_cli_accepts_large_integer_runtime_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".review" / "evidence"
+            for digits in (4300, 4301):
+                path = root / f"integer-{digits}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(self.document_text_with_pr("9" * digits))
+
+            result = self.run_persisted_cli(root)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("2 artifact(s)", result.stdout)
 
     def test_parser_rejects_duplicate_top_level_keys(self):
         self.assert_duplicate_keys_rejected(

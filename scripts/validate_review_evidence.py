@@ -38,10 +38,28 @@ def reject_duplicate_object_keys(pairs):
     return document
 
 
+class ExactInteger(int):
+    def __new__(cls, value):
+        instance = super().__new__(cls, Decimal(value))
+        instance.source = value
+        return instance
+
+    def __repr__(self):
+        return self.source
+
+    def __str__(self):
+        return self.source
+
+
+def parse_exact_integer(value):
+    return ExactInteger(value)
+
+
 def parse_document(text):
     return json.loads(
         text,
         parse_float=Decimal,
+        parse_int=parse_exact_integer,
         parse_constant=reject_non_json_constant,
         object_pairs_hook=reject_duplicate_object_keys,
     )
