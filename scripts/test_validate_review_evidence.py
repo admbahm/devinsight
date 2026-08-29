@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("validate_review_evidence.py")
@@ -60,6 +61,18 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def run_single_cli(self, path):
+        return subprocess.run(
+            [sys.executable, str(MODULE_PATH), str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def document_text_with_pr(self, representation):
+        text = EXAMPLE_PATH.read_text()
+        return text.replace('"pr": 14', f'"pr": {representation}', 1)
 
     def write_document(self, path, document):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -551,6 +564,98 @@ class ReviewEvidenceValidatorTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(ValueError, "not a valid JSON value"):
                     validator.parse_document(text)
+
+    def test_parser_preserves_exact_decimal_values(self):
+        cases = (
+            ("0.99999999999999999", Decimal("0.99999999999999999")),
+            ("1.0000000000000001", Decimal("1.0000000000000001")),
+            ("9007199254740993e0", Decimal("9007199254740993")),
+        )
+        for representation, expected in cases:
+            with self.subTest(representation=representation):
+                document = validator.parse_document(
+                    self.document_text_with_pr(representation)
+                )
+
+                self.assertIsInstance(document["review"]["pr"], Decimal)
+                self.assertEqual(document["review"]["pr"], expected)
+
+    def test_schema_rejects_exact_fractional_pr_values(self):
+        for representation in (
+            "0.99999999999999999",
+            "1.0000000000000001",
+            "1e-1",
+            "-1.5",
+        ):
+            with self.subTest(representation=representation):
+                document = validator.parse_document(
+                    self.document_text_with_pr(representation)
+                )
+
+                errors = validator.validate(document)
+
+                self.assertTrue(
+                    any("review.pr" in error and "integer" in error for error in errors)
+                )
+
+    def test_schema_accepts_exact_integer_representations(self):
+        large_integer = "9" * 512
+        for representation in (
+            "1",
+            "14",
+            "1.0",
+            "10e-1",
+            "9007199254740993e0",
+            "1e1000",
+            large_integer,
+        ):
+            with self.subTest(representation=representation):
+                document = validator.parse_document(
+                    self.document_text_with_pr(representation)
+                )
+
+                self.assertEqual(validator.validate(document), [])
+
+    def test_schema_rejects_zero_and_negative_integer_pr_values(self):
+        for representation in ("0", "0.0", "-1", "-1e3"):
+            with self.subTest(representation=representation):
+                document = validator.parse_document(
+                    self.document_text_with_pr(representation)
+                )
+
+                errors = validator.validate(document)
+
+                self.assertTrue(
+                    any("review.pr" in error and "minimum" in error for error in errors)
+                )
+
+    def test_single_file_cli_rejects_lossy_fractional_pr_values(self):
+        for representation in (
+            "0.99999999999999999",
+            "1.0000000000000001",
+        ):
+            with self.subTest(representation=representation):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "fractional-pr.json"
+                    path.write_text(self.document_text_with_pr(representation))
+
+                    result = self.run_single_cli(path)
+
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("review.pr", result.stderr)
+
+    def test_persisted_cli_rejects_lossy_fractional_pr_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".review" / "evidence"
+            path = root / "fractional-pr.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(self.document_text_with_pr("0.99999999999999999"))
+
+            result = self.run_persisted_cli(root)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("fractional-pr.json", result.stderr)
+            self.assertIn("review.pr", result.stderr)
 
     def test_parser_rejects_duplicate_top_level_keys(self):
         self.assert_duplicate_keys_rejected(

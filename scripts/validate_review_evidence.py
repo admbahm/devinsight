@@ -2,9 +2,10 @@
 
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 
-from jsonschema.validators import validator_for
+from jsonschema.validators import extend, validator_for
 
 ACTIONABLE = {"PROVEN", "HIGH_CONFIDENCE"}
 EXECUTABLE_EVIDENCE = {"test", "command", "experiment"}
@@ -40,6 +41,7 @@ def reject_duplicate_object_keys(pairs):
 def parse_document(text):
     return json.loads(
         text,
+        parse_float=Decimal,
         parse_constant=reject_non_json_constant,
         object_pairs_hook=reject_duplicate_object_keys,
     )
@@ -59,7 +61,18 @@ def load_structural_validator():
     schema = parse_document(SCHEMA_PATH.read_text())
     validator_class = validator_for(schema)
     validator_class.check_schema(schema)
-    return validator_class(schema)
+    base_type_checker = validator_class.TYPE_CHECKER
+
+    def is_integer(checker, instance):
+        if isinstance(instance, Decimal):
+            return instance == instance.to_integral_value()
+        return base_type_checker.is_type(instance, "integer")
+
+    exact_number_validator = extend(
+        validator_class,
+        type_checker=base_type_checker.redefine("integer", is_integer),
+    )
+    return exact_number_validator(schema)
 
 
 STRUCTURAL_VALIDATOR = load_structural_validator()
