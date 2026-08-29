@@ -213,6 +213,16 @@ impl AppState {
             self.logs_received_this_sec += entries.len() as u64;
             let mut needs_full_filter_update = false;
 
+            // Trim before processing the batch so we avoid repeated capacity checks
+            // while ingesting high-volume log bursts.
+            if self.logs.len() >= 10000 {
+                let trim_count = self.logs.len().saturating_sub(9000);
+                for _ in 0..trim_count {
+                    self.logs.pop_front();
+                }
+                needs_full_filter_update = true;
+            }
+
             for entry in entries {
                 // Send macOS notification for errors
                 #[cfg(feature = "macos")]
@@ -242,13 +252,13 @@ impl AppState {
                 }
 
                 // Batch process logs for better performance
-                if self.logs.len() >= 10000 {
-                    // Remove oldest 1000 logs when we hit the limit
-                    for _ in 0..1000 {
-                        self.logs.pop_front();
-                    }
-                    needs_full_filter_update = true;
-                }
+                // if self.logs.len() >= 10000 {
+                //     // Remove oldest 1000 logs when we hit the limit
+                //     for _ in 0..1000 {
+                //         self.logs.pop_front();
+                //     }
+                //     needs_full_filter_update = true;
+                // }
 
                 // Update statistics
                 match entry.level {
@@ -756,15 +766,28 @@ impl Tui {
                     for (idx, msg_line) in wrapped.iter().enumerate() {
                         if idx == 0 {
                             let spans = vec![
-                                Span::styled(format!("{} ", icon), Style::default().fg(level_color)),
-                                Span::styled(format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp), Style::default().fg(Color::DarkGray)),
-                                Span::styled(format!("[{:<tag_width$}] ", formatted_tag), Style::default().fg(tag_color).add_modifier(Modifier::BOLD)),
-                                Span::styled(format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()), Style::default().fg(level_color)),
+                                Span::styled(
+                                    format!("{} ", icon),
+                                    Style::default().fg(level_color),
+                                ),
+                                Span::styled(
+                                    format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp),
+                                    Style::default().fg(Color::DarkGray),
+                                ),
+                                Span::styled(
+                                    format!("[{:<tag_width$}] ", formatted_tag),
+                                    Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()),
+                                    Style::default().fg(level_color),
+                                ),
                                 Span::styled(msg_line.clone(), Style::default().fg(message_color)),
                             ];
                             lines.push(Line::from(spans));
                         } else {
-                            let padding_len = TIMESTAMP_WIDTH + tag_width + LEVEL_WIDTH + PADDING + 2;
+                            let padding_len =
+                                TIMESTAMP_WIDTH + tag_width + LEVEL_WIDTH + PADDING + 2;
                             let padding_spaces = " ".repeat(padding_len);
                             let spans = vec![
                                 Span::styled(padding_spaces, Style::default().fg(Color::Reset)),
@@ -777,7 +800,10 @@ impl Tui {
                     let truncated_message = if log.message.len() > message_width {
                         format!(
                             "{}...",
-                            log.message.chars().take(message_width.saturating_sub(3)).collect::<String>()
+                            log.message
+                                .chars()
+                                .take(message_width.saturating_sub(3))
+                                .collect::<String>()
                         )
                     } else {
                         log.message.clone()
@@ -785,9 +811,18 @@ impl Tui {
 
                     let spans = vec![
                         Span::styled(format!("{} ", icon), Style::default().fg(level_color)),
-                        Span::styled(format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp), Style::default().fg(Color::DarkGray)),
-                        Span::styled(format!("[{:<tag_width$}] ", formatted_tag), Style::default().fg(tag_color).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()), Style::default().fg(level_color)),
+                        Span::styled(
+                            format!("{:<TIMESTAMP_WIDTH$} ", log.timestamp),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            format!("[{:<tag_width$}] ", formatted_tag),
+                            Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("{:<LEVEL_WIDTH$}: ", log.level.as_str()),
+                            Style::default().fg(level_color),
+                        ),
                         Span::styled(truncated_message, Style::default().fg(message_color)),
                     ];
                     lines.push(Line::from(spans));
@@ -841,16 +876,29 @@ impl Tui {
 
                     details.push(Line::from(vec![
                         Span::styled("Level:     ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(log.level.as_str(), Style::default().fg(log.level.color()).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            log.level.as_str(),
+                            Style::default()
+                                .fg(log.level.color())
+                                .add_modifier(Modifier::BOLD),
+                        ),
                     ]));
 
                     details.push(Line::from(vec![
                         Span::styled("Tag:       ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(&log.tag, Style::default().fg(get_tag_color(&log.tag)).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            &log.tag,
+                            Style::default()
+                                .fg(get_tag_color(&log.tag))
+                                .add_modifier(Modifier::BOLD),
+                        ),
                     ]));
 
                     details.push(Line::from(""));
-                    details.push(Line::from(Span::styled("Message:", Style::default().fg(Color::DarkGray))));
+                    details.push(Line::from(Span::styled(
+                        "Message:",
+                        Style::default().fg(Color::DarkGray),
+                    )));
 
                     let message_color = match log.level {
                         LogLevel::Error => Color::Red,
@@ -861,7 +909,10 @@ impl Tui {
 
                     let inspector_inner_width = inspector_area.width.saturating_sub(2) as usize;
                     for line in wrap_message(&log.message, inspector_inner_width) {
-                        details.push(Line::from(Span::styled(line, Style::default().fg(message_color))));
+                        details.push(Line::from(Span::styled(
+                            line,
+                            Style::default().fg(message_color),
+                        )));
                     }
                 } else {
                     details.push(Line::from("No log details available"));
@@ -870,14 +921,13 @@ impl Tui {
                 details.push(Line::from("No log selected"));
             }
 
-            let paragraph = Paragraph::new(details)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Log Inspector ")
-                        .border_type(ratatui::widgets::BorderType::Rounded)
-                        .border_style(Style::default().fg(Color::Cyan)),
-                );
+            let paragraph = Paragraph::new(details).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Log Inspector ")
+                    .border_type(ratatui::widgets::BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
             f.render_widget(paragraph, inspector_area);
         }
     }
@@ -939,7 +989,11 @@ impl Tui {
         ];
 
         let bar_chart = BarChart::default()
-            .block(Block::default().borders(Borders::ALL).title(" Log Level Distribution "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Log Level Distribution "),
+            )
             .data(&bar_data)
             .bar_width(7)
             .bar_gap(2)
@@ -950,7 +1004,8 @@ impl Tui {
 
         let sparkline_width = sparkline_area.width.saturating_sub(2) as usize;
         let rates_data: Vec<u64> = if state.log_rates.len() > sparkline_width {
-            state.log_rates
+            state
+                .log_rates
                 .iter()
                 .skip(state.log_rates.len() - sparkline_width)
                 .cloned()
@@ -963,7 +1018,11 @@ impl Tui {
         };
 
         let sparkline = Sparkline::default()
-            .block(Block::default().borders(Borders::ALL).title(" Log Ingestion Rate (logs/sec) "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Log Ingestion Rate (logs/sec) "),
+            )
             .data(&rates_data)
             .style(Style::default().fg(Color::Green));
         f.render_widget(sparkline, sparkline_area);
@@ -1162,7 +1221,10 @@ fn format_tag(tag: &str, width: usize) -> String {
     if tag.len() <= width {
         format!("{:<width$}", tag, width = width)
     } else {
-        let mut truncated = tag.chars().take(width.saturating_sub(2)).collect::<String>();
+        let mut truncated = tag
+            .chars()
+            .take(width.saturating_sub(2))
+            .collect::<String>();
         truncated.push_str("..");
         truncated
     }
@@ -1365,7 +1427,7 @@ mod tests {
     #[test]
     fn app_state_ingestion_rates_overflow_cap() {
         let mut state = AppState::new(None);
-        
+
         // Simulating 205 rate updates
         for i in 0..205 {
             state.logs_received_this_sec = i as u64;
