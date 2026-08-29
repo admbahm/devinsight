@@ -1,0 +1,67 @@
+{
+  "schema_version": "3",
+  "review": {
+    "repository": "admbahm/devinsight",
+    "pr": 14,
+    "base_sha": "a1ab72491d44f8c20192dcec27ac2ab2c847f1c3",
+    "head_sha": "3a36f86f9c2d2e90e3be4903d503e044b59f8a86",
+    "verdict": "FAIL"
+  },
+  "verification": [
+    {
+      "id": "retention-regression-base",
+      "type": "test",
+      "required": true,
+      "outcome": "PASS",
+      "detail": "The targeted retention regressions completed successfully on the base commit."
+    },
+    {
+      "id": "retention-regression-head",
+      "type": "test",
+      "required": true,
+      "outcome": "FAIL",
+      "detail": "The targeted retention regressions completed on the PR head and reproduced the bounded-memory violation."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DI-REV-001",
+      "classification": "PROVEN",
+      "severity": "high",
+      "claim": "Moving retention trimming before batch processing preserves the 10,000-entry bounded-memory behavior.",
+      "affected_behavior": "Batch ingestion can retain more than 10,000 logs after add_logs returns.",
+      "locations": [
+        { "path": "src/tui.rs", "symbol": "AppState::add_logs" },
+        { "path": "src/tui.rs", "symbol": "Tui::run" },
+        { "path": "src/main.rs", "symbol": "run_interactive_mode" }
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "detail": "Temporary batch-retention regressions failed on PR head and passed on main.",
+          "base": "PASS",
+          "head": "FAIL"
+        },
+        {
+          "type": "code_path",
+          "qualification": "UNAVOIDABLE",
+          "detail": "The PR trims using only pre-batch length and then inserts the full batch without another capacity check."
+        }
+      ],
+      "expected": "Retained logs remain at or below 10,000 after batch ingestion.",
+      "observed": "A 9,999-entry state plus two entries retains 10,001; a single 15,000-entry batch retains 15,000.",
+      "reproduction": [
+        "Create AppState::new(None), add 9,999 entries, then add two entries and assert logs.len() <= 10_000.",
+        "Create AppState::new(None), add one 15,000-entry batch and assert logs.len() <= 10_000.",
+        "Run the same temporary tests on PR head and main."
+      ],
+      "attempted_disproof": [
+        "Searched add_logs/add_log callers for a batch-size constraint; none exists.",
+        "Searched for a post-batch retention guard; none exists.",
+        "Ran identical tests on main; both passed there.",
+        "Tested filtered indexes and tail state at the trim boundary; that separate hypothesis did not reproduce."
+      ],
+      "remaining_uncertainty": "Real-world frequency and memory impact depend on batch size; the retention violation is reproduced."
+    }
+  ]
+}
